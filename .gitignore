@@ -1,0 +1,12 @@
+CLAUDE.md
+
+# build output
+/build/
+/build-debug/
+
+# engine and game sources: fetched by scripts/fetch-deps.ps1, port changes live in patches/
+/external/
+
+# local test data / logs
+/Docs/tools/__pycache__/
+*.log

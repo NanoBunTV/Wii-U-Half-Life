@@ -1,0 +1,245 @@
+diff --git a/common/defaults.h b/common/defaults.h
+index 7cd9c1f..4b18038 100644
+--- a/common/defaults.h
++++ b/common/defaults.h
+@@ -56,7 +56,7 @@ SETUP BACKENDS DEFINITIONS
+ // select messagebox implementation
+ //
+ #ifndef XASH_MESSAGEBOX
+-	#if XASH_SDL >= 2 && !XASH_NSWITCH // SDL2 messageboxes are not available on NSW
++	#if XASH_SDL >= 2 && !XASH_NSWITCH && !XASH_WIIU // SDL2 messageboxes are not available on NSW and Wii U
+ 		#define XASH_MESSAGEBOX MSGBOX_SDL
+ 	#elif XASH_WIN32
+ 		#define XASH_MESSAGEBOX MSGBOX_WIN32
+@@ -149,6 +149,11 @@ Default build-depended cvar and constant values
+ 	#define DEFAULT_MODE_WIDTH   960
+ 	#define DEFAULT_MODE_HEIGHT  544
+ 	#define DEFAULT_ALLOWCONSOLE 1
++#elif XASH_WIIU
++	#define DEFAULT_M_IGNORE     "1"
++	#define DEFAULT_MODE_WIDTH   1280
++	#define DEFAULT_MODE_HEIGHT  720
++	#define DEFAULT_ALLOWCONSOLE 1
+ #elif XASH_ANDROID
+ 	#define DEFAULT_TOUCH_ENABLE "1"
+ #elif XASH_MOBILE_PLATFORM
+diff --git a/engine/common/filesystem_engine.c b/engine/common/filesystem_engine.c
+index 9ed62eb..a7e4e3a 100644
+--- a/engine/common/filesystem_engine.c
++++ b/engine/common/filesystem_engine.c
+@@ -279,6 +279,11 @@ static qboolean FS_DetermineRootDirectory( char *out, size_t size )
+ 		return true;
+ 	Sys_Error( "couldn't find %s data directory", XASH_ENGINE_NAME );
+ 	return false;
++#elif XASH_WIIU
++	if( WiiU_GetBasePath( out, size ))
++		return true;
++	Sys_Error( "couldn't find %s data directory", XASH_ENGINE_NAME );
++	return false;
+ #elif ( XASH_SDL >= 2 ) && !XASH_NSWITCH // GetBasePath not impl'd in switch-sdl2
+ 	// SDL2 hands the base path over to us, SDL3 keeps ownership and frees it on quit
+ 	qboolean owned = XASH_SDL == 2;
+diff --git a/engine/common/launcher.c b/engine/common/launcher.c
+index 70adc33..1cd85ba 100644
+--- a/engine/common/launcher.c
++++ b/engine/common/launcher.c
+@@ -33,11 +33,23 @@ static void Sys_ChangeGame( const char *progname )
+ 	// stub
+ }
+ 
++#if XASH_WIIU
++static int Launcher_Run( void )
++{
++	return Host_Main( szArgc, szArgv, XASH_GAMEDIR, 0, Sys_ChangeGame );
++}
++#endif
++
+ int main( int argc, char **argv )
+ {
+ #if XASH_PSVITA
+ 	// inject -dev -console into args if required
+ 	szArgc = PSVita_GetArgv( argc, argv, &szArgv );
++#elif XASH_WIIU
++	// mounts the SD card and adds arguments from the SD card's command line file
++	szArgc = WiiU_GetArgv( argc, argv, &szArgv );
++	// the RPX main thread has a 64 KB stack, far too small for the engine
++	return WiiU_RunOnBigStack( Launcher_Run );
+ #elif XASH_IOS
+ 	IOS_LaunchDialog();
+ 	szArgc = IOS_GetArgs( &szArgv );
+diff --git a/engine/common/net_ws.c b/engine/common/net_ws.c
+index d139dff..a496b17 100644
+--- a/engine/common/net_ws.c
++++ b/engine/common/net_ws.c
+@@ -2016,7 +2016,11 @@ void NET_Init( void )
+ 	NET_InitializeCriticalSections();
+ 
+ 	net.allow_ip = !Sys_CheckParm( "-noip" );
++#if XASH_WIIU
++	net.allow_ip6 = false; // no IPv6 in the Wii U network stack
++#else
+ 	net.allow_ip6 = !Sys_CheckParm( "-noip6" );
++#endif
+ 
+ 	// specify custom host port
+ 	if( Sys_GetParmFromCmdLine( "-port", cmd ) && Q_isdigit( cmd ))
+diff --git a/engine/common/net_ws_private.h b/engine/common/net_ws_private.h
+index 6af7e3d..af3f836 100644
+--- a/engine/common/net_ws_private.h
++++ b/engine/common/net_ws_private.h
+@@ -21,6 +21,8 @@ GNU General Public License for more details.
+ #elif XASH_PSVITA
+ #include "platform/psvita/net_psvita.h"
+ static const struct in6_addr in6addr_any;
++#elif XASH_WIIU
++#include "platform/wiiu/net_wiiu.h" // from the Wii U port's src/ folder
+ #else
+ #include "platform/posix/net.h"
+ #endif
+diff --git a/engine/common/system.c b/engine/common/system.c
+index 522ba25..b9f50ad 100644
+--- a/engine/common/system.c
++++ b/engine/common/system.c
+@@ -153,7 +153,7 @@ const char *Sys_GetCurrentUser( void )
+ 	sceAppUtilSystemParamGetString( SCE_SYSTEM_PARAM_ID_USERNAME, username, sizeof( username ) - 1 );
+ 	if( !COM_StringEmpty( username ))
+ 		return username;
+-#elif XASH_POSIX && !XASH_ANDROID && !XASH_NSWITCH
++#elif XASH_POSIX && !XASH_ANDROID && !XASH_NSWITCH && !XASH_WIIU
+ 	static string username;
+ 	struct passwd *pw = getpwuid( geteuid( ));
+ 
+@@ -530,7 +530,7 @@ qboolean Sys_CanRestart( void )
+ {
+ #if XASH_NSWITCH || XASH_PSVITA
+ 	return true;
+-#elif XASH_IOS
++#elif XASH_IOS || XASH_WIIU // Wii U: game libraries are linked in, there's nothing else to restart into
+ 	return false;
+ #else
+ 	int exelen = wai_getExecutablePath( NULL, 0, NULL );
+@@ -587,6 +587,8 @@ qboolean Sys_NewInstance( const char *gamedir, const char *finalmsg )
+ 	Host_ShutdownWithReason( finalmsg );
+ 	envSetNextLoad( exe, newargs );
+ 	exit( 0 );
++#elif XASH_WIIU
++	(void)replaced_arg;
+ #else
+ 	char *exe = NULL;
+ 	// don't use engine allocation utils here
+diff --git a/engine/common/whereami.c b/engine/common/whereami.c
+index 3eb3f08..0892dfa 100644
+--- a/engine/common/whereami.c
++++ b/engine/common/whereami.c
+@@ -839,7 +839,7 @@ int WAI_PREFIX(getModulePath)(char* out, int capacity, int* dirname_length)
+   return -1;
+ }
+ 
+-#elif defined(__SWITCH__) || defined(__vita__) || defined(__EMSCRIPTEN__)
++#elif defined(__SWITCH__) || defined(__vita__) || defined(__EMSCRIPTEN__) || defined(__WIIU__)
+ 
+ /* Not possible on this platform */
+ 
+diff --git a/engine/platform/platform.h b/engine/platform/platform.h
+index 8253556..bd74516 100644
+--- a/engine/platform/platform.h
++++ b/engine/platform/platform.h
+@@ -132,6 +132,14 @@ int PSVita_GetArgv( int in_argc, char **in_argv, char ***out_argv );
+ void PSVita_InputUpdate( void );
+ #endif
+ 
++#if XASH_WIIU
++void WiiU_Init( void );
++void WiiU_Shutdown( void );
++qboolean WiiU_GetBasePath( char *buf, const size_t buflen );
++int WiiU_GetArgv( int in_argc, char **in_argv, char ***out_argv );
++int WiiU_RunOnBigStack( int ( *fn )( void ));
++#endif
++
+ #if XASH_DOS
+ void DOS_Init( void );
+ void DOS_Shutdown( void );
+@@ -161,6 +169,8 @@ static inline void Platform_Init( qboolean con_showalways )
+ 	NSwitch_Init( );
+ #elif XASH_PSVITA
+ 	PSVita_Init( );
++#elif XASH_WIIU
++	WiiU_Init( );
+ #elif XASH_DOS
+ 	DOS_Init( );
+ #elif XASH_WIN32
+@@ -176,6 +186,8 @@ static inline void Platform_Shutdown( void )
+ 	NSwitch_Shutdown( );
+ #elif XASH_PSVITA
+ 	PSVita_Shutdown( );
++#elif XASH_WIIU
++	WiiU_Shutdown( );
+ #elif XASH_DOS
+ 	DOS_Shutdown( );
+ #elif XASH_WIN32
+diff --git a/engine/platform/posix/sys_posix.c b/engine/platform/posix/sys_posix.c
+index 7f9c7ac..1eae091 100644
+--- a/engine/platform/posix/sys_posix.c
++++ b/engine/platform/posix/sys_posix.c
+@@ -23,7 +23,7 @@ GNU General Public License for more details.
+ #include "platform/platform.h"
+ #include "menu_int.h"
+ 
+-#if !XASH_ANDROID && !XASH_NSWITCH && !XASH_PSVITA
++#if !XASH_ANDROID && !XASH_NSWITCH && !XASH_PSVITA && !XASH_WIIU
+ void Platform_ShellExecute( const char *path, const char *parms )
+ {
+ 	const char *argv[] = { OPEN_COMMAND, path, NULL };
+@@ -42,7 +42,7 @@ void Posix_Daemonize( void )
+ {
+ 	if( Sys_CheckParm( "-daemonize" ))
+ 	{
+-#if XASH_POSIX && defined(_POSIX_VERSION) && !defined(XASH_MOBILE_PLATFORM)
++#if XASH_POSIX && defined(_POSIX_VERSION) && !defined(XASH_MOBILE_PLATFORM) && !XASH_WIIU
+ 		pid_t daemon = fork();
+ 
+ 		if( daemon < 0 )
+@@ -96,7 +96,7 @@ static void Posix_SigtermCallback( int signal )
+ 
+ void Posix_SetupSigtermHandling( void )
+ {
+-#if !XASH_PSVITA
++#if !XASH_PSVITA && !XASH_WIIU
+ 	struct sigaction act = { 0 };
+ 	act.sa_handler = Posix_SigtermCallback;
+ 	act.sa_flags = 0;
+diff --git a/filesystem/dir.c b/filesystem/dir.c
+index 64ac45c..0b7aae3 100644
+--- a/filesystem/dir.c
++++ b/filesystem/dir.c
+@@ -22,7 +22,7 @@ GNU General Public License for more details.
+ #include <stddef.h>
+ #if XASH_POSIX
+ #include <unistd.h>
+-#if !XASH_PSVITA
++#if !XASH_PSVITA && !XASH_WIIU
+ #include <sys/ioctl.h>
+ #endif
+ #endif
+@@ -55,7 +55,7 @@ typedef struct dir_s
+ 
+ static qboolean Platform_GetDirectoryCaseSensitivity( const char *dir )
+ {
+-#if XASH_WIN32 || XASH_PSVITA || XASH_NSWITCH
++#if XASH_WIN32 || XASH_PSVITA || XASH_NSWITCH || XASH_WIIU // Wii U SD card is FAT32
+ 	return false;
+ #elif XASH_ANDROID
+ 	// on Android, doing code below causes crash in MediaProviderGoogle.apk!libfuse_jni.so
+diff --git a/filesystem/sys.c b/filesystem/sys.c
+index 712c3e4..fd17eee 100644
+--- a/filesystem/sys.c
++++ b/filesystem/sys.c
+@@ -66,7 +66,7 @@ GNU General Public License for more details.
+ 	#define S_ISDIR( m ) ( FBitSet( m, S_IFMT ) == S_IFDIR )
+ #endif
+ 
+-#if !XASH_PSVITA && !XASH_NSWITCH
++#if !XASH_PSVITA && !XASH_NSWITCH && !XASH_WIIU
+ 	#define HAVE_DUP
+ #endif
+ 

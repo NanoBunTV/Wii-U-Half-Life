@@ -1,0 +1,42 @@
+diff --git a/sdk_includes/public/build.h b/sdk_includes/public/build.h
+index 8eb7396..8695e26 100644
+--- a/sdk_includes/public/build.h
++++ b/sdk_includes/public/build.h
+@@ -89,6 +89,7 @@ Then you can use another oneliner to query all variables:
+ #undef XASH_TERMUX
+ #undef XASH_WASI
+ #undef XASH_WASM
++#undef XASH_WIIU
+ #undef XASH_WIN32
+ #undef XASH_X86
+ 
+@@ -135,6 +136,8 @@ Then you can use another oneliner to query all variables:
+ 		#endif // TARGET_OS_IOS
+ 	#elif defined __SWITCH__
+ 		#define XASH_NSWITCH 1
++	#elif defined __WIIU__
++		#define XASH_WIIU 1
+ 	#elif defined __vita__
+ 		#define XASH_PSVITA 1
+ 	#elif defined __wasi__
+diff --git a/sdk_includes/public/buildenums.h b/sdk_includes/public/buildenums.h
+index ef73e85..3a19a1c 100644
+--- a/sdk_includes/public/buildenums.h
++++ b/sdk_includes/public/buildenums.h
+@@ -60,6 +60,7 @@ For more information, please refer to <http://unlicense.org/>
+ #define PLATFORM_HURD       17
+ #define PLATFORM_PSP        18
+ #define PLATFORM_IOS    	19
++#define PLATFORM_WIIU      20
+ 
+ #if XASH_WIN32
+ 	#define XASH_PLATFORM PLATFORM_WIN32
+@@ -89,6 +90,8 @@ For more information, please refer to <http://unlicense.org/>
+ 	#define XASH_PLATFORM PLATFORM_NSWITCH
+ #elif XASH_PSVITA
+ 	#define XASH_PLATFORM PLATFORM_PSVITA
++#elif XASH_WIIU
++	#define XASH_PLATFORM PLATFORM_WIIU
+ #elif XASH_WASI
+ 	#define XASH_PLATFORM PLATFORM_WASI
+ #elif XASH_SUNOS

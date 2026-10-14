@@ -1,0 +1,21 @@
+diff --git a/public/build.h b/public/build.h
+index a948925..2ebaacf 100644
+--- a/public/build.h
++++ b/public/build.h
+@@ -84,6 +84,7 @@ Then you can use another oneliner to query all variables:
+ #undef XASH_SERENITY
+ #undef XASH_SUNOS
+ #undef XASH_TERMUX
++#undef XASH_WIIU
+ #undef XASH_WIN32
+ #undef XASH_X86
+ #undef XASH_NSWITCH
+@@ -131,6 +132,8 @@ Then you can use another oneliner to query all variables:
+ 		#endif // TARGET_OS_IOS
+ 	#elif defined __SWITCH__
+ 		#define XASH_NSWITCH 1
++	#elif defined __WIIU__
++		#define XASH_WIIU 1
+ 	#elif defined __vita__
+ 		#define XASH_PSVITA 1
+ 	#elif defined __wasi__
