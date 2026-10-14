@@ -96,14 +96,31 @@ threads, time and BSD sockets.
 
 Video, audio, input, timers and threads come from Xash's SDL2 backend (`engine/platform/sdl2`) on top of
 devkitPro's `wiiu-sdl2`. That covers the GamePad, Pro Controller and Wiimote+Nunchuk, HOME menu handling
-(ProcUI) and AX audio. The software renderer draws into a buffer that `vid_sdl2.c` presents through an SDL
-texture.
+(ProcUI) and AX audio.
+
+**Video output:** SDL's Wii U window always has the TV scan mode's size (1920x1080, 1280x720 or 854x480).
+The software renderer draws at `vid_wiiu_render_height` lines instead (default 720, width follows the TV's
+aspect ratio; saved in `video.cfg`, takes effect after a restart). `vid_sdl2.c` always uses SDL_Renderer
+(the GX2 backend) on Wii U: ref_soft writes into the top-left corner of a TV-sized RGBX streaming
+texture, and that corner is stretched to the screen. DEBUGGING.md explains why it's done this way.
 
 Engine changes for the port are guarded by `#if XASH_WIIU`. They include:
 
 - platform hooks, the base path, IPv4-only networking and stubs for `fork`/`exec`/`getpwuid`/`sigaction`;
 - a case-insensitive filesystem (FAT32);
-- `whereami.c` (no executable path).
+- `whereami.c` (no executable path);
+- the video output above (`vid_sdl2.c`, `vid_common.c`);
+- stick look in degrees per second without the mouse `sensitivity` multiplier (`input.c`, `in_joy.c`);
+- the GamePad layout (`Key_SetWiiUGamepadDefaults` in `in_keys.c`, re-applied after `unbindall`) and a
+  `joy_centerview` command (`in_joy.c`);
+- GamePad gyro: SDL doesn't report it, and a second `VPADRead` caller would steal samples from SDL (each
+  sample is returned once; SDL detects button presses from the samples' trigger/release bits). So the
+  link wraps `VPADRead` (`-Wl,--wrap=VPADRead`, `__wrap_VPADRead` in `joy_sdl2.c`) and collects the gyro
+  from SDL's own reads; `SDLash_WiiUGyroFrame` feeds the average to the engine's normal gyro calibration
+  and aiming every frame;
+- `+gyro_recenter` (−): levels the view and pauses gyro aiming while held (`in_joy.c`);
+- HOME → Close (`SDL_QUIT`) quits immediately instead of opening the menu's quit dialog (`host_sdl2.c`);
+- menu entries that make no sense on a console hidden in mainui (`mainui.patch`).
 
 The full list is in `patches/xash3d-fwgs.patch`.
 

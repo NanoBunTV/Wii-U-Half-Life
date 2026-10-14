@@ -23,7 +23,8 @@ $repos = @(
 	@{ Dir = 'xash3d-fwgs';                         Url = 'https://github.com/FWGS/xash3d-fwgs.git';    Commit = 'e0ece3d95241fc71af89f93336c2bab2273976d3'; Patch = 'xash3d-fwgs.patch' },
 	@{ Dir = 'xash3d-fwgs/3rdparty/library_suffix'; Url = $null;                                        Commit = $null;                                       Patch = 'library_suffix.patch' },
 	@{ Dir = 'xash3d-fwgs/3rdparty/mainui';         Url = $null;                                        Commit = $null;                                       Patch = 'mainui.patch' },
-	@{ Dir = 'hlsdk-portable';                      Url = 'https://github.com/FWGS/hlsdk-portable.git'; Commit = '6c168fc79d95c8ffb934fa37aaafbbd424e03c1a'; Patch = 'hlsdk-portable.patch' }
+	@{ Dir = 'hlsdk-portable';                      Url = 'https://github.com/FWGS/hlsdk-portable.git'; Commit = '6c168fc79d95c8ffb934fa37aaafbbd424e03c1a'; Patch = 'hlsdk-portable.patch' },
+	@{ Dir = 'hlsdk-portable/freevgui';             Url = $null;                                        Commit = $null;                                       Patch = 'freevgui.patch' }
 )
 
 function Invoke-Git { & git.exe @args; if ($LASTEXITCODE -ne 0) { throw "git $args failed" } }

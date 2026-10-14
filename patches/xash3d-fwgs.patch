@@ -23,6 +23,221 @@ index 7cd9c1f..4b18038 100644
  #elif XASH_ANDROID
  	#define DEFAULT_TOUCH_ENABLE "1"
  #elif XASH_MOBILE_PLATFORM
+diff --git a/engine/client/input/in_joy.c b/engine/client/input/in_joy.c
+index 1da3114..f0eb75a 100644
+--- a/engine/client/input/in_joy.c
++++ b/engine/client/input/in_joy.c
+@@ -66,8 +66,13 @@ static struct joy_touchpad_s
+ 
+ static qboolean joy_initialized;
+ 
++#if XASH_WIIU // degrees per second at full stick, the mouse sensitivity isn't applied (see input.c)
++static CVAR_DEFINE_AUTO( joy_pitch,   "120.0", FCVAR_ARCHIVE | FCVAR_FILTERABLE, "joystick pitch sensitivity" );
++static CVAR_DEFINE_AUTO( joy_yaw,     "180.0", FCVAR_ARCHIVE | FCVAR_FILTERABLE, "joystick yaw sensitivity" );
++#else
+ static CVAR_DEFINE_AUTO( joy_pitch,   "100.0", FCVAR_ARCHIVE | FCVAR_FILTERABLE, "joystick pitch sensitivity" );
+ static CVAR_DEFINE_AUTO( joy_yaw,     "100.0", FCVAR_ARCHIVE | FCVAR_FILTERABLE, "joystick yaw sensitivity" );
++#endif
+ static CVAR_DEFINE_AUTO( joy_side,    "1.0", FCVAR_ARCHIVE | FCVAR_FILTERABLE, "joystick side sensitivity. Values from -1.0 to 1.0" );
+ static CVAR_DEFINE_AUTO( joy_forward, "1.0", FCVAR_ARCHIVE | FCVAR_FILTERABLE, "joystick forward sensitivity. Values from -1.0 to 1.0" );
+ static CVAR_DEFINE_AUTO( joy_lt_threshold, "16384", FCVAR_ARCHIVE | FCVAR_FILTERABLE, "left trigger threshold. Value from 0 to 32767");
+@@ -109,6 +114,12 @@ static convar_t *const joy_touchpad_mode_cvars[MAX_TOUCHPADS] =
+ static vec3_t joy_gyro_speed;
+ // last non-zero gyro speed, retained for debug display after joy_gyro_speed is cleared
+ static vec3_t joy_gyro_speed_display;
++#if XASH_WIIU
++// gyro recenter button is held (+gyro_recenter)
++static qboolean joy_gyro_held;
++#else
++#define joy_gyro_held false
++#endif
+ 
+ /*
+ ============
+@@ -511,7 +522,7 @@ void Joy_FinalizeMove( float *fw, float *side, float *dpitch, float *dyaw )
+ 	*dpitch += joy_pitch.value * (float)joyaxis[JOY_AXIS_PITCH].val/(float)SHRT_MAX * host.realframetime;
+ 	*dyaw   -= joy_yaw.value   * (float)joyaxis[JOY_AXIS_YAW  ].val/(float)SHRT_MAX * host.realframetime;
+ 
+-	if( joy_gyro_enable.value && joy_have_gyro.value && (int)joy_calibrated.value == JOY_CALIBRATED )
++	if( joy_gyro_enable.value && joy_have_gyro.value && (int)joy_calibrated.value == JOY_CALIBRATED && !joy_gyro_held )
+ 	{
+ 		float pitch_speed = joy_gyro_speed[0] * ( 180.0f / M_PI );
+ 		float yaw_speed   = joy_gyro_speed[1] * ( 180.0f / M_PI );
+@@ -777,6 +788,27 @@ static void Joy_UnbindAll_f( void )
+ 		Key_SetBinding( key, "" );
+ }
+ 
++#if XASH_WIIU
++static void Joy_CenterView_f( void )
++{
++	// level the view, the client picks the angles up from the engine every frame
++	cl.viewangles[PITCH] = 0.0f;
++}
++
++// gyro recenter button: level the view, and ignore the gyro while held so the GamePad can be moved
++// back to a comfortable position
++static void Joy_GyroRecenterDown_f( void )
++{
++	Joy_CenterView_f();
++	joy_gyro_held = true;
++}
++
++static void Joy_GyroRecenterUp_f( void )
++{
++	joy_gyro_held = false;
++}
++#endif
++
+ static void Joy_CalibrateGyro_f( void )
+ {
+ 	if( !joy_have_gyro.value )
+@@ -799,6 +831,11 @@ void Joy_Init( void )
+ {
+ 	Cmd_AddRestrictedCommand( "joy_calibrate_gyro", Joy_CalibrateGyro_f, "calibrate gamepad gyroscope. You must to put gamepad on stationary surface" );
+ 	Cmd_AddRestrictedCommand( "joy_unbindall", Joy_UnbindAll_f, "removes all commands from all gamepad keys" );
++#if XASH_WIIU
++	Cmd_AddCommand( "joy_centerview", Joy_CenterView_f, "look straight ahead" );
++	Cmd_AddCommand( "+gyro_recenter", Joy_GyroRecenterDown_f, "look straight ahead and pause gyro aiming while held" );
++	Cmd_AddCommand( "-gyro_recenter", Joy_GyroRecenterUp_f, "resume gyro aiming" );
++#endif
+ 
+ 	Cvar_RegisterVariable( &joy_pitch );
+ 	Cvar_RegisterVariable( &joy_yaw );
+diff --git a/engine/client/input/in_keys.c b/engine/client/input/in_keys.c
+index 2203268..76e62e2 100644
+--- a/engine/client/input/in_keys.c
++++ b/engine/client/input/in_keys.c
+@@ -367,6 +367,48 @@ static void Key_Unbind_f( void )
+ 	Key_SetBinding( b, "" );
+ }
+ 
++#if XASH_WIIU
++/*
++===================
++Key_SetWiiUGamepadDefaults
++
++The Wii U GamePad layout. PC configs start with "unbindall" and only bind keyboard keys, so this is
++applied again after every unbindall; bind lines that follow in the config still override it.
++===================
++*/
++static void Key_SetWiiUGamepadDefaults( void )
++{
++	static const struct
++	{
++		int key;
++		const char *binding;
++	} binds[] =
++	{
++		{ K_JOY2,          "+attack" },             // ZR
++		{ K_JOY1,          "+attack2" },            // ZL
++		{ K_R1_BUTTON,     "invnext" },             // R
++		{ K_L1_BUTTON,     "invprev" },             // L
++		{ K_A_BUTTON,      "+jump" },
++		{ K_B_BUTTON,      "+duck" },
++		{ K_X_BUTTON,      "+reload" },
++		{ K_Y_BUTTON,      "+use" },
++		{ K_DPAD_UP,       "impulse 100" },         // flashlight
++		{ K_DPAD_DOWN,     "lastinv" },
++		{ K_DPAD_LEFT,     "save quick" },
++		{ K_DPAD_RIGHT,    "load quick" },
++		{ K_LSTICK,        "+speed" },              // walk while held
++		{ K_RSTICK,        "joy_centerview" },
++		{ K_START_BUTTON,  "cancelselect" },        // +: pause menu
++		{ K_BACK_BUTTON,   "+gyro_recenter" },      // -: level the view, gyro paused while held
++		{ K_L2_BUTTON,     "" },                    // unused by SDL2, triggers are K_JOY1/K_JOY2
++		{ K_R2_BUTTON,     "" },
++	};
++
++	for( int i = 0; i < ARRAYSIZE( binds ); i++ )
++		Key_SetBinding( binds[i].key, binds[i].binding );
++}
++#endif
++
+ /*
+ ===================
+ Key_Unbindall_f
+@@ -383,6 +425,9 @@ static void Key_Unbindall_f( void )
+ 	// set some defaults
+ 	Key_SetBinding( K_ESCAPE, "cancelselect" );
+ 	Key_SetBinding( K_START_BUTTON, "cancelselect" );
++#if XASH_WIIU
++	Key_SetWiiUGamepadDefaults();
++#endif
+ }
+ 
+ /*
+@@ -402,6 +447,9 @@ static void Key_Reset_f( void )
+ 	// apply default values
+ 	for( int i = 0; i < ARRAYSIZE( keynames ); i++ )
+ 		Key_SetBinding( keynames[i].keynum, keynames[i].binding );
++#if XASH_WIIU
++	Key_SetWiiUGamepadDefaults();
++#endif
+ }
+ 
+ /*
+@@ -571,6 +619,9 @@ void Key_Init( void )
+ 	// setup default binding. "unbindall" from config.cfg will be reset it
+ 	for( int i = 0; i < ARRAYSIZE( keynames ); i++ )
+ 		Key_SetBinding( keynames[i].keynum, keynames[i].binding );
++#if XASH_WIIU
++	Key_SetWiiUGamepadDefaults();
++#endif
+ 
+ 	Cvar_RegisterVariable( &key_rotate );
+ 
+diff --git a/engine/client/input/input.c b/engine/client/input/input.c
+index 09dfa2a..0394c1e 100644
+--- a/engine/client/input/input.c
++++ b/engine/client/input/input.c
+@@ -664,6 +664,21 @@ static void IN_Commands( void )
+ 
+ 		IN_CollectInput( &forward, &side, &pitch, &yaw, in_mouseinitialized && !m_ignore.value );
+ 
++#if XASH_WIIU
++		// there's no mouse here, but the client still multiplies look input by the mouse
++		// "sensitivity", which usually comes from the player's PC config. Cancel it out so
++		// joy_yaw/joy_pitch are real degrees per second; the client's zoom ratio still applies
++		{
++			float sens = Cvar_VariableValue( "sensitivity" );
++
++			if( sens > 0.0f )
++			{
++				yaw /= sens;
++				pitch /= sens;
++			}
++		}
++#endif
++
+ 		if( cls.key_dest == key_game )
+ 		{
+ 			clgame.dllFuncs.pfnLookEvent( yaw, pitch );
+diff --git a/engine/client/vid_common.c b/engine/client/vid_common.c
+index d9a07ac..89db6fe 100644
+--- a/engine/client/vid_common.c
++++ b/engine/client/vid_common.c
+@@ -29,6 +29,11 @@ CVAR_DEFINE( window_width, "width", "0", FCVAR_RENDERINFO|FCVAR_VIDRESTART, "scr
+ CVAR_DEFINE( window_height, "height", "0", FCVAR_RENDERINFO|FCVAR_VIDRESTART, "screen height" );
+ CVAR_DEFINE( vid_width, "vid_width", "0", FCVAR_READ_ONLY, "actual window viewport size" );
+ CVAR_DEFINE( vid_height, "vid_height", "0", FCVAR_READ_ONLY, "actual window viewport size" );
++#if XASH_WIIU
++// SDL's Wii U window always has the TV scan mode size (up to 1920x1080), far too many pixels for
++// ref_soft on the Wii U CPU. Render at this height instead and let SDL_Renderer (GX2) scale it up
++CVAR_DEFINE_AUTO( vid_wiiu_render_height, "720", FCVAR_RENDERINFO|FCVAR_VIDRESTART, "Wii U: software rendering height, the GPU scales it to the TV" );
++#endif
+ static CVAR_DEFINE( vid_window_insets, "_window_insets", "", FCVAR_PRIVILEGED, "override window safe area insets for testing: left top right bottom, in pixels" );
+ 
+ glwstate_t	glw_state;
+@@ -250,6 +255,9 @@ void VID_Init( void )
+ 	Cvar_RegisterVariable( &vid_width );
+ 	Cvar_RegisterVariable( &vid_height );
+ 	Cvar_RegisterVariable( &vid_window_insets );
++#if XASH_WIIU
++	Cvar_RegisterVariable( &vid_wiiu_render_height );
++#endif
+ 	Cvar_Get( "_window_xpos", "-1", FCVAR_RENDERINFO, "deprecated cvar" );
+ 	Cvar_Get( "_window_ypos", "-1", FCVAR_RENDERINFO, "deprecated cvar" );
+ 
 diff --git a/engine/common/filesystem_engine.c b/engine/common/filesystem_engine.c
 index 9ed62eb..a7e4e3a 100644
 --- a/engine/common/filesystem_engine.c
@@ -208,6 +423,308 @@ index 7f9c7ac..1eae091 100644
  	struct sigaction act = { 0 };
  	act.sa_handler = Posix_SigtermCallback;
  	act.sa_flags = 0;
+diff --git a/engine/platform/sdl2/host_sdl2.c b/engine/platform/sdl2/host_sdl2.c
+index fbcc883..15f9354 100644
+--- a/engine/platform/sdl2/host_sdl2.c
++++ b/engine/platform/sdl2/host_sdl2.c
+@@ -292,7 +292,13 @@ static void SDLash_EventHandler( SDL_Event *event )
+ 		break;
+ 
+ 	case SDL_QUIT:
++#if XASH_WIIU
++		// HOME menu -> Close software: the system already asked the player and is waiting for us to
++		// exit while we're in the background, so don't ask again with an (invisible) menu dialog
++		Sys_Quit( "caught SDL_QUIT" );
++#else
+ 		CL_RequestQuit( "caught SDL_QUIT" );
++#endif
+ 		break;
+ 	case SDL_MOUSEWHEEL:
+ 		IN_MWheelEvent( event->wheel.y );
+@@ -435,6 +441,8 @@ void Platform_RunEvents( void )
+ 
+ #if XASH_PSVITA
+ 	PSVita_InputUpdate();
++#elif XASH_WIIU
++	SDLash_WiiUGyroFrame();
+ #endif
+ }
+ 
+diff --git a/engine/platform/sdl2/joy_sdl2.c b/engine/platform/sdl2/joy_sdl2.c
+index 99d45b0..7d661f9 100644
+--- a/engine/platform/sdl2/joy_sdl2.c
++++ b/engine/platform/sdl2/joy_sdl2.c
+@@ -19,6 +19,9 @@ GNU General Public License for more details.
+ #include "input.h"
+ #include "client.h"
+ #include "platform_sdl2.h"
++#if XASH_WIIU
++#include <vpad/input.h>
++#endif
+ 
+ static const int g_button_mapping[] =
+ {
+@@ -154,6 +157,15 @@ static void SDLash_GameControllerAddMappings( const char *name )
+ 	Mem_Free( p );
+ }
+ 
++#if XASH_WIIU
++static qboolean SDLash_IsWiiUGamePad( SDL_GameController *gc )
++{
++	const char *name = gc ? SDL_GameControllerName( gc ) : NULL;
++
++	return name && !Q_stricmp( name, "Wii U Gamepad" );
++}
++#endif
++
+ static void SDLash_SetActiveGameController( SDL_JoystickID id )
+ {
+ 	if( g_current_gamepad_id == id )
+@@ -191,6 +203,15 @@ static void SDLash_SetActiveGameController( SDL_JoystickID id )
+ 		}
+ #endif // SDL_VERSION_ATLEAST( 2, 0, 14 )
+ 
++#if XASH_WIIU
++		// the GamePad has a gyro, but SDL doesn't know (see SDLash_WiiUGyroFrame)
++		if( SDLash_IsWiiUGamePad( g_current_gamepad ))
++		{
++			have_gyro = true;
++			SDLash_RestartCalibration();
++		}
++#endif
++
+ 		Joy_SetCapabilities( have_gyro, num_touchpads );
+ 	}
+ }
+@@ -261,34 +282,105 @@ static void SDLash_GameControllerRemoved( SDL_JoystickID id )
+ 	}
+ }
+ 
+-#if SDL_VERSION_ATLEAST( 2, 0, 14 )
+-static void SDLash_GameControllerSensorUpdate( SDL_ControllerSensorEvent sensor )
++#if SDL_VERSION_ATLEAST( 2, 0, 14 ) || XASH_WIIU
++// gyro sample in radians per second: pitch, yaw, roll
++static void SDLash_GyroSample( float *sample )
+ {
+ 	vec3_t data;
+ 
+-	if( sensor.which != g_current_gamepad_id )
+-		return;
+-
+-	if( sensor.sensor != SDL_SENSOR_GYRO )
+-		return;
+-
+ 	if( gyrocal.time != 0.0f )
+ 	{
+ 		if( host.realtime > gyrocal.time )
+ 			SDLash_FinalizeCalibration();
+ 		else
+-			SDLash_AccumulateCalibrationData( sensor.data );
++			SDLash_AccumulateCalibrationData( sample );
+ 
+ 		// block gyro events only during initial calibration
+ 		if( !gyrocal.continuous )
+ 			return;
+ 	}
+ 
+-	VectorSubtract( sensor.data, gyrocal.calibrated_values, data );
++	VectorSubtract( sample, gyrocal.calibrated_values, data );
+ 	Joy_GyroEvent( data );
+ }
+ #endif
+ 
++#if SDL_VERSION_ATLEAST( 2, 0, 14 )
++static void SDLash_GameControllerSensorUpdate( SDL_ControllerSensorEvent sensor )
++{
++	if( sensor.which != g_current_gamepad_id )
++		return;
++
++	if( sensor.sensor != SDL_SENSOR_GYRO )
++		return;
++
++	SDLash_GyroSample( sensor.data );
++}
++#endif
++
++#if XASH_WIIU
++/*
++=============
++__wrap_VPADRead
++
++SDL's Wii U joystick driver doesn't report motion sensors. A second VPADRead caller can't be used:
++each sample is only returned once, so it would starve the gyro (SDL reads first) and steal button
++presses from SDL (which uses the samples' trigger/release bits). Instead the link wraps VPADRead
++(-Wl,--wrap=VPADRead) and the gyro is collected from SDL's own reads (one sample per frame).
++=============
++*/
++int32_t __real_VPADRead( VPADChan chan, VPADStatus *buffers, uint32_t count, VPADReadError *outError );
++
++static vec3_t wiiu_gyro_sum;
++static int wiiu_gyro_samples;
++
++int32_t __wrap_VPADRead( VPADChan chan, VPADStatus *buffers, uint32_t count, VPADReadError *outError )
++{
++	int32_t read = __real_VPADRead( chan, buffers, count, outError );
++
++	if( chan == VPAD_CHAN_0 && read > 0 && ( !outError || *outError == VPAD_READ_SUCCESS ))
++	{
++		for( int32_t i = 0; i < read; i++ )
++		{
++			wiiu_gyro_sum[0] += buffers[i].gyro.x;
++			wiiu_gyro_sum[1] += buffers[i].gyro.y;
++			wiiu_gyro_sum[2] += buffers[i].gyro.z;
++			wiiu_gyro_samples++;
++		}
++	}
++
++	return read;
++}
++
++/*
++=============
++SDLash_WiiUGyroFrame
++
++Feed the average GamePad rotation rate since the last frame to the gyro code. Called every frame,
++after SDL has polled the controllers.
++=============
++*/
++void SDLash_WiiUGyroFrame( void )
++{
++	vec3_t sample;
++	float scale;
++
++	if( !wiiu_gyro_samples )
++		return;
++
++	// VPAD reports revolutions per second
++	scale = ( 2.0f * M_PI ) / wiiu_gyro_samples;
++	VectorScale( wiiu_gyro_sum, scale, sample );
++	VectorClear( wiiu_gyro_sum );
++	wiiu_gyro_samples = 0;
++
++	if( !SDLash_IsWiiUGamePad( g_current_gamepad ))
++		return;
++
++	SDLash_GyroSample( sample );
++}
++#endif
++
+ #if SDL_VERSION_ATLEAST( 2, 0, 14 )
+ static void SDLash_GameControllerTouchpadEvent( const SDL_ControllerTouchpadEvent *tpad, qboolean down )
+ {
+diff --git a/engine/platform/sdl2/platform_sdl2.h b/engine/platform/sdl2/platform_sdl2.h
+index 3670a9d..e232ef2 100644
+--- a/engine/platform/sdl2/platform_sdl2.h
++++ b/engine/platform/sdl2/platform_sdl2.h
+@@ -34,6 +34,9 @@ void SDLash_FreeCursors( void );
+ // joy_sdl.c
+ //
+ void SDLash_HandleGameControllerEvent( SDL_Event *ev );
++#if XASH_WIIU
++void SDLash_WiiUGyroFrame( void );
++#endif
+ 
+ //
+ // sensor_sdl2.c
+diff --git a/engine/platform/sdl2/vid_sdl2.c b/engine/platform/sdl2/vid_sdl2.c
+index e85afd2..a5ab106 100644
+--- a/engine/platform/sdl2/vid_sdl2.c
++++ b/engine/platform/sdl2/vid_sdl2.c
+@@ -43,6 +43,10 @@ struct
+ 	SDL_Surface *win;
+ } sw;
+ 
++#if XASH_WIIU
++extern convar_t vid_wiiu_render_height; // vid_common.c
++#endif
++
+ void Platform_Minimize_f( void )
+ {
+ 	if( host.hWnd )
+@@ -57,7 +61,9 @@ qboolean SW_CreateBuffer( int width, int height, uint *stride, uint *bpp, uint *
+ 	if( sw.renderer )
+ 	{
+ 		unsigned int format = SDL_GetWindowPixelFormat( host.hWnd );
++#if !XASH_WIIU
+ 		SDL_RenderSetLogicalSize( sw.renderer, refState.width, refState.height );
++#endif
+ 
+ 		if( sw.tex )
+ 		{
+@@ -79,7 +85,22 @@ qboolean SW_CreateBuffer( int width, int height, uint *stride, uint *bpp, uint *
+ 		if( SDL_BYTESPERPIXEL( format ) != 2 && SDL_BYTESPERPIXEL( format ) != 4 )
+ 			format = SDL_PIXELFORMAT_RGBA8888;
+ 
++#if XASH_WIIU
++		// ref_soft leaves alpha at 0 and SDL's GX2 renderer alpha-tests (> 0), so use a format without alpha
++		format = SDL_PIXELFORMAT_RGBX8888;
++
++		// a texture smaller than the TV stops updating after the first frame (seen in Cemu),
++		// so make it TV-sized; ref_soft draws into the top-left corner (stride = texture pitch)
++		// and SW_UnlockBuffer stretches that corner
++		{
++			int tex_w = width, tex_h = height;
++
++			SDL_GetRendererOutputSize( sw.renderer, &tex_w, &tex_h );
++			sw.tex = SDL_CreateTexture( sw.renderer, format, SDL_TEXTUREACCESS_STREAMING, Q_max( tex_w, width ), Q_max( tex_h, height ));
++		}
++#else
+ 		sw.tex = SDL_CreateTexture( sw.renderer, format, SDL_TEXTUREACCESS_STREAMING, width, height );
++#endif
+ 
+ 		// fallback
+ 		if( !sw.tex && format != SDL_PIXELFORMAT_RGBA8888 )
+@@ -204,7 +225,11 @@ void SW_UnlockBuffer( void )
+ 		SDL_SetTextureBlendMode(sw.tex, SDL_BLENDMODE_NONE);
+ 
+ 
++#if XASH_WIIU
++		SDL_RenderCopy(sw.renderer, sw.tex, &src, NULL); // the used corner, stretched to the TV
++#else
+ 		SDL_RenderCopy(sw.renderer, sw.tex, &src, &dst);
++#endif
+ 		SDL_RenderPresent(sw.renderer);
+ 
+ 		return;
+@@ -400,6 +425,18 @@ void VID_SaveWindowSize( int width, int height )
+ 
+ 	VID_GetWindowSizeInPixels( host.hWnd, sw.renderer, &render_w, &render_h );
+ 	VID_SetDisplayTransform( &render_w, &render_h );
++
++#if XASH_WIIU
++	// also before the renderer exists, so the render size never changes during startup
++	if( glw_state.software && render_h > 0 )
++	{
++		int h = bound( VID_MIN_HEIGHT, (int)vid_wiiu_render_height.value, render_h );
++
++		render_w = render_w * h / render_h; // keep the TV's aspect ratio
++		render_h = h;
++	}
++#endif
++
+ 	R_SaveVideoMode( width, height, render_w, render_h, maximized );
+ }
+ 
+@@ -701,8 +738,18 @@ static rserr_t VID_CreateWindow( const int input_width, const int input_height,
+ 	if( glw_state.software )
+ 	{
+ 		char cmd[64];
++		qboolean use_renderer = Sys_GetParmFromCmdLine( "-sdl_renderer", cmd );
++
++#if XASH_WIIU
++		// always, so the image can be scaled (see vid_wiiu_render_height)
++		if( !use_renderer )
++		{
++			Q_strncpy( cmd, "-1", sizeof( cmd ));
++			use_renderer = true;
++		}
++#endif
+ 
+-		if( Sys_GetParmFromCmdLine( "-sdl_renderer", cmd ))
++		if( use_renderer )
+ 		{
+ 			int sdl_renderer = Q_max( -1, Q_atoi( cmd ));
+ 
 diff --git a/filesystem/dir.c b/filesystem/dir.c
 index 64ac45c..0b7aae3 100644
 --- a/filesystem/dir.c

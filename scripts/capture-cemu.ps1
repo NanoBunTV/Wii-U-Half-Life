@@ -19,6 +19,7 @@ public static class CemuWin {
 	[DllImport("user32.dll")] public static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
 	[DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
 	[DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr h, IntPtr hdc, uint flags);
+	[DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
 	[StructLayout(LayoutKind.Sequential)] public struct RECT { public int L, T, R, B; }
 	public static List<IntPtr> ForPid(uint pid) {
 		var list = new List<IntPtr>();
@@ -27,6 +28,10 @@ public static class CemuWin {
 	}
 }
 '@
+
+# Without this, Windows display scaling makes GetWindowRect return scaled-down sizes and the image
+# only contains the top-left part of the window.
+[void][CemuWin]::SetProcessDPIAware()
 
 New-Item -ItemType Directory -Force $OutDir | Out-Null
 $n = 0

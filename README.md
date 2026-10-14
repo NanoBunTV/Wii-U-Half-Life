@@ -18,6 +18,27 @@ Requires the Aroma environment.
    to `sd:/halflife/valve`.
 3. Start Half-Life from the Wii U menu.
 
+## Controls (Wii U GamePad)
+
+| Button | Action |
+|---|---|
+| Left stick / right stick | Move / look |
+| ZR / ZL | Fire / alt-fire |
+| R / L | Next / previous weapon |
+| A / B | Jump / crouch |
+| X / Y | Reload / use |
+| D-pad up / down | Flashlight / last weapon |
+| D-pad left / right | Quick save / quick load |
+| L3 (click left stick) | Walk (hold) |
+| R3 (click right stick) | Look straight ahead |
+| + | Pause menu |
+| − | Gyro recenter: levels the view; gyro aiming is paused while held |
+
+Gyro aiming is on by default and adds to the right stick. Keep the GamePad still for a few seconds after
+starting so the gyro can calibrate. To recenter, hold −, move the GamePad back to a comfortable position
+and let go. Gyro aiming can be turned off, inverted or made faster/slower in Configuration → Gamepad → Gyroscope. Buttons can be rebound in Configuration → Controls; stick speed is in
+Configuration → Gamepad.
+
 ## Building
 
 See [Docs/BUILDING.md](Docs/BUILDING.md). In short, with devkitPro installed:

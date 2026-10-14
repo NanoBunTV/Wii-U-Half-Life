@@ -165,6 +165,9 @@ target_link_libraries(halflife PRIVATE
 	public build_vcs library_suffix miniz bzip2 mpg123 opusfile opus vorbisfile vorbis ogg MultiEmulator
 	SDL2::SDL2 m stdc++)
 target_link_options(halflife PRIVATE -Wl,--gc-sections)
+# SDL's GamePad driver is the only VPADRead caller (reading twice steals samples); the engine picks the
+# gyro out of SDL's reads (__wrap_VPADRead in joy_sdl2.c)
+target_link_options(halflife PRIVATE -Wl,--wrap=VPADRead)
 
 # ---------------------------------------------------------------------------------------------------
 # .wuhb content: engine data that isn't part of the game files (menu buttons, fonts, gamepad mappings)

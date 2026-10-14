@@ -58,6 +58,7 @@ A full build takes about 2 minutes on the owner's PC. The log is quiet: third-pa
 | `library_suffix.patch` | `external/xash3d-fwgs/3rdparty/library_suffix` (`build.h`, platform names) |
 | `mainui.patch` | `external/xash3d-fwgs/3rdparty/mainui` (its copy of `build.h`) |
 | `hlsdk-portable.patch` | `external/hlsdk-portable` (its copy of `build.h`) |
+| `freevgui.patch` | `external/hlsdk-portable/freevgui` (submodule): big-endian fixes for reading TGA headers and VGUI data streams |
 
 Workflow:
 

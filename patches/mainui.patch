@@ -1,3 +1,116 @@
+diff --git a/menus/AdvancedControls.cpp b/menus/AdvancedControls.cpp
+index 3424ce3..a8f83b2 100644
+--- a/menus/AdvancedControls.cpp
++++ b/menus/AdvancedControls.cpp
+@@ -18,6 +18,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+ 
+ */
+ 
++#include "build.h"
+ #include "q_client.h"
+ #include "Framework.h"
+ #include "MenuStrings.h"
+@@ -199,6 +200,15 @@ void CAdvancedControls::_Init( void )
+ 
+ 	AddItem( banner );
+ 	AddItem( done );
++#if XASH_WIIU
++	// no mouse or touch controls; stick and gyro settings are in the gamepad menu
++	crosshair.SetCoord( 72, 210 );
++	lookSpring.SetCoord( 72, 260 );
++	autoaim.SetCoord( 72, 310 );
++	AddItem( crosshair );
++	AddItem( lookSpring );
++	AddItem( autoaim );
++#else
+ 	AddItem( inputDev );
+ 	AddItem( crosshair );
+ 	AddItem( invertMouse );
+@@ -209,6 +219,7 @@ void CAdvancedControls::_Init( void )
+ 	AddItem( autoaim );
+ 	AddItem( rawinput );
+ 	AddItem( sensitivity );
++#endif
+ }
+ 
+ 
+diff --git a/menus/Configuration.cpp b/menus/Configuration.cpp
+index 6e0a981..a2d976e 100644
+--- a/menus/Configuration.cpp
++++ b/menus/Configuration.cpp
+@@ -18,6 +18,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+ 
+ */
+ 
++#include "build.h"
+ #include "Framework.h"
+ #include "Bitmap.h"
+ #include "PicButton.h"
+@@ -55,6 +56,17 @@ void CMenuOptions::_Init( void )
+ 	msgBox.Link( this );
+ 
+ 	AddItem( banner );
++#if XASH_WIIU
++	// no video modes, touch layout editor or update check on a console
++	AddButton( L( "Controls" ), L( "Change button bindings and aiming options" ),
++		PC_CONTROLS, UI_Controls_Menu, QMF_NOTIFY );
++	AddButton( L( "GameUI_Audio" ), L( "Change sound volume and quality" ),
++		PC_AUDIO, UI_Audio_Menu, QMF_NOTIFY );
++	AddButton( L( "GameUI_Video" ), L( "Change screen size, gamma and image quality" ),
++		PC_VIDEO, UI_VidOptions_Menu, QMF_NOTIFY );
++	AddButton( L( "GameUI_Joystick" ), L( "Change gamepad stick and gyro settings" ),
++		PC_GAMEPAD, UI_GamePad_Menu, QMF_NOTIFY, 'g' );
++#else
+ 	AddButton( L( "Controls" ), L( "Change keyboard and mouse settings" ),
+ 		PC_CONTROLS, UI_Controls_Menu, QMF_NOTIFY );
+ 	AddButton( L( "GameUI_Audio" ), L( "Change sound volume and quality" ),
+@@ -67,6 +79,7 @@ void CMenuOptions::_Init( void )
+ 		PC_GAMEPAD, UI_GamePad_Menu, QMF_NOTIFY, 'g' );
+ 	AddButton( L( "Update" ), L( "Check for updates" ),
+ 		PC_UPDATE, msgBox.MakeOpenEvent(), QMF_NOTIFY );
++#endif
+ 	AddButton( L( "Done" ), L( "Go back to the Main menu" ),
+ 		PC_DONE, VoidCb( &CMenuOptions::Hide ), QMF_NOTIFY );
+ }
+diff --git a/menus/Main.cpp b/menus/Main.cpp
+index 4d1a382..cb7725f 100644
+--- a/menus/Main.cpp
++++ b/menus/Main.cpp
+@@ -19,6 +19,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+ */
+ 
+ 
++#include "build.h"
+ #include "Framework.h"
+ #include "Action.h"
+ #include "Bitmap.h"
+@@ -297,10 +298,14 @@ void CMenuMain::_Init( void )
+ 	if ( bCustomGame )
+ 		AddItem( customGame );
+ 
++#if !XASH_WIIU // web links and window buttons make no sense on a console
+ 	AddItem( previews );
++#endif
+ 	AddItem( quit );
++#if !XASH_WIIU
+ 	AddItem( minimizeBtn );
+ 	AddItem( quitButton );
++#endif
+ }
+ 
+ /*
+@@ -326,7 +331,11 @@ void CMenuMain::VidInit( bool connected )
+ 	quit.SetCoord( hoffset, previews_voffset + ygap );
+ 
+ 	// let's start calculating positions
++#if XASH_WIIU
++	int yoffset = previews_voffset; // no Previews button, close the gap above Quit
++#else
+ 	int yoffset = previews_voffset - ygap;
++#endif
+ 
+ 	if( bCustomGame )
+ 	{
 diff --git a/sdk_includes/public/build.h b/sdk_includes/public/build.h
 index 8eb7396..8695e26 100644
 --- a/sdk_includes/public/build.h

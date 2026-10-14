@@ -1,0 +1,144 @@
+diff --git a/fileimage.cpp b/fileimage.cpp
+index cb562fe..12660f7 100644
+--- a/fileimage.cpp
++++ b/fileimage.cpp
+@@ -4,6 +4,24 @@
+ #include "fileimage.h"
+ #include "vgui_internal.h"
+ 
++// TGA header fields are little-endian on disk, convert them to/from host order
++static uint16_t TGA_Short( uint16_t v )
++{
++	const uint8_t *b = (const uint8_t *)&v;
++
++	return (uint16_t)( b[0] | ( b[1] << 8 ));
++}
++
++static void TGA_SwapHeader( TGAFileHeader *hdr )
++{
++	hdr->m_CMapStart = TGA_Short( hdr->m_CMapStart );
++	hdr->m_CMapLength = TGA_Short( hdr->m_CMapLength );
++	hdr->m_XOffset = TGA_Short( hdr->m_XOffset );
++	hdr->m_YOffset = TGA_Short( hdr->m_YOffset );
++	hdr->m_Width = TGA_Short( hdr->m_Width );
++	hdr->m_Height = TGA_Short( hdr->m_Height );
++}
++
+ bool Load32BitTGA( FileImageStream *fp, FileImage *image )
+ {
+ 	TGAFileHeader hdr;
+@@ -11,6 +29,7 @@ bool Load32BitTGA( FileImageStream *fp, FileImage *image )
+ 	image->Term();
+ 
+ 	fp->Read( &hdr, sizeof( hdr ));
++	TGA_SwapHeader( &hdr );
+ 	if( fp->ErrorStatus() || hdr.m_PixelDepth != 32 || hdr.m_ImageType != 10 )
+ 		return false;
+ 
+@@ -96,6 +115,7 @@ void Save32BitTGA( FileHandle_t fp, FileImage *image )
+ 	hdr.m_ImageType = 10;
+ 	hdr.m_Width = image->m_Width;
+ 	hdr.m_Height = image->m_Height;
++	TGA_SwapHeader( &hdr ); // the conversion is its own inverse
+ 
+ 	fwrite( &hdr, 1, sizeof( hdr ), (FILE *)fp );
+ 
+diff --git a/inputstream.cpp b/inputstream.cpp
+index a4803ed..9a13f64 100644
+--- a/inputstream.cpp
++++ b/inputstream.cpp
+@@ -5,6 +5,22 @@
+ 
+ using namespace vgui;
+ 
++// VGUI data files are little-endian, convert multi-byte values to host order
++template<typename T> static T LittleToHost( T v )
++{
++#if defined( __BYTE_ORDER__ ) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
++	unsigned char *p = (unsigned char *)&v;
++
++	for( size_t i = 0; i < sizeof( T ) / 2; i++ )
++	{
++		unsigned char tmp = p[i];
++		p[i] = p[sizeof( T ) - 1 - i];
++		p[sizeof( T ) - 1 - i] = tmp;
++	}
++#endif
++	return v;
++}
++
+ DataInputStream::DataInputStream( InputStream *is ) :
+ 	stream( is )
+ {
+@@ -96,7 +112,7 @@ unsigned short DataInputStream::readUShort( bool &success )
+ 		stream->readUChar( (unsigned char *)( &ret ), sizeof( ret ), success );
+ 	else success = false;
+ 
+-	return ret;
++	return LittleToHost( ret );
+ }
+ 
+ short int DataInputStream::readShort( bool &success )
+@@ -107,7 +123,7 @@ short int DataInputStream::readShort( bool &success )
+ 		stream->readUChar( (unsigned char *)( &ret ), sizeof( ret ), success );
+ 	else success = false;
+ 
+-	return ret;
++	return LittleToHost( ret );
+ }
+ 
+ int DataInputStream::readInt( bool &success )
+@@ -118,7 +134,7 @@ int DataInputStream::readInt( bool &success )
+ 		stream->readUChar( (unsigned char *)( &ret ), sizeof( ret ), success );
+ 	else success = false;
+ 
+-	return ret;
++	return LittleToHost( ret );
+ }
+ 
+ unsigned int DataInputStream::readUInt( bool &success )
+@@ -129,7 +145,7 @@ unsigned int DataInputStream::readUInt( bool &success )
+ 		stream->readUChar( (unsigned char *)( &ret ), sizeof( ret ), success );
+ 	else success = false;
+ 
+-	return ret;
++	return LittleToHost( ret );
+ }
+ 
+ long int DataInputStream::readLong( bool &success )
+@@ -140,7 +156,7 @@ long int DataInputStream::readLong( bool &success )
+ 		stream->readUChar( (unsigned char *)( &ret ), sizeof( ret ), success );
+ 	else success = false;
+ 
+-	return ret;
++	return LittleToHost( ret );
+ }
+ 
+ unsigned long DataInputStream::readULong( bool &success )
+@@ -151,7 +167,7 @@ unsigned long DataInputStream::readULong( bool &success )
+ 		stream->readUChar( (unsigned char *)( &ret ), sizeof( ret ), success );
+ 	else success = false;
+ 
+-	return ret;
++	return LittleToHost( ret );
+ }
+ 
+ float DataInputStream::readFloat( bool &success )
+@@ -162,7 +178,7 @@ float DataInputStream::readFloat( bool &success )
+ 		stream->readUChar( (unsigned char *)( &ret ), sizeof( ret ), success );
+ 	else success = false;
+ 
+-	return ret;
++	return LittleToHost( ret );
+ }
+ 
+ double DataInputStream::readDouble( bool &success )
+@@ -173,7 +189,7 @@ double DataInputStream::readDouble( bool &success )
+ 		stream->readUChar( (unsigned char *)( &ret ), sizeof( ret ), success );
+ 	else success = false;
+ 
+-	return ret;
++	return LittleToHost( ret );
+ }
+ 
+ void DataInputStream::readLine( char *str, int count, bool &success )

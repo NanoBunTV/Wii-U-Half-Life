@@ -47,11 +47,16 @@ exits** with code `0xC0000005` (access violation, "Faulting module: unknown" in 
 instead of running our crash handler. What to do:
 
 1. Run with `--force-interpreter`. If the problem goes away, it's timing- or codegen-sensitive (see the
-   history below).
+   history below). If it still crashes, that's even better: in interpreter mode Cemu writes a **crash
+   log into `log.txt`** with the PPC registers (`IP`, `LR`) and a "PPC stack trace" of return addresses.
+   Decode those with `addr2line -i` (see "Real hardware" below). This is how the FreeVGUI font crash
+   was found on 2026-10-13.
 2. Narrow it down with temporary `Con_Reportf( "WIIU TRACE: ..." )` lines. OSReport output reaches the log
    right up to the crash. Remove them afterwards; `git checkout -- <file>` in `external/` is easiest if the
    file has no other changes.
 3. `scripts/capture-cemu.ps1` saves an image of Cemu's windows (only Cemu's) to `build/cemu-capture/`.
+   Before 2026-10-13 the script wasn't DPI-aware, so with Windows display scaling it saved only the
+   top-left part of the window. That looked like a zoomed and cropped game image, but the game was fine.
 
 Things that **did not** work, so don't spend time on them again:
 
@@ -86,6 +91,24 @@ the recompiler at about 36 FPS.
 
 **To do:** test the `-O2` build on real hardware. If it works there, report to Cemu and consider making the
 workaround Cemu-test-builds only.
+
+### SDL Wii U renderer quirks (found 2026-10-13)
+
+The software renderer's frame goes through SDL's GX2 renderer (`vid_sdl2.c`, `SW_*` functions, Wii U
+branches). Three traps, all handled now:
+
+- **Alpha test:** SDL's GX2 renderer enables `GX2SetAlphaTest(GREATER, 0)`. ref_soft leaves alpha at 0, so
+  an RGBA texture draws nothing (black screen). We use `SDL_PIXELFORMAT_RGBX8888`.
+- **Texture smaller than the TV stops updating:** with a 1280x720 streaming texture on a 1920x1080 TV, the
+  screen kept showing the first frame forever while the game ran (owner confirmed by eye in Cemu; the
+  log showed the scene being drawn and presented). Uploading with `SDL_UpdateTexture` and dropping
+  `SDL_RenderSetLogicalSize` didn't help. Fix: the texture is TV-sized, ref_soft draws into its top-left
+  corner, and only that corner is stretched to the screen. Not checked on hardware whether it's a Cemu
+  or SDL issue.
+- **The render size changes during startup** unless `VID_SaveWindowSize` applies `vid_wiiu_render_height`
+  from the first call (before the SDL renderer exists).
+
+Window captures (`capture-cemu.ps1`) of the Vulkan window are reliable; the frozen picture was real.
 
 ## Real hardware
 
