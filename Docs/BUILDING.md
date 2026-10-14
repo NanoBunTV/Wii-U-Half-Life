@@ -48,6 +48,19 @@ for decoding crash addresses.
 A full build takes about 2 minutes on the owner's PC. The log is quiet: third-party libraries are built with
 `-w`.
 
+## GX2 shaders
+
+The renderer's shaders (`src/gx2gl/shaders/*.vsh` + `*.psh`) are GPU assembly. `scripts/build-shaders.ps1`
+assembles them into `src/gx2gl/shaders/gx2gl_shaders.h`, which is kept in the repository, so a normal build
+doesn't need the assembler. Only run the script after changing a shader.
+
+It needs `latte-assembler.exe` from decaf-emu in `tools/latte-assembler/` (gitignored). The owner got it
+from decaf-emu's CI build `decaf-emu-windows-2019.zip` (github.com/decaf-emu/decaf-emu/releases, tag
+`release`, 2023-11-09): copy `latte-assembler.exe` and `zlib1.dll` out of it. Its `compile` command
+(GLSL) needs AMD's shader analyzer and isn't used; `assemble` is. It checks clause addresses and
+instruction counts (`ADDR(..)`, `CNT(..)`) and says what it expected, but not the hardware's register
+read rules; see the comments at the top of the shaders.
+
 ## Changing the engine or game code (patches)
 
 `external/` is not in git. The port's changes to upstream code live in `patches/`:

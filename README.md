@@ -34,10 +34,15 @@ Requires the Aroma environment.
 | + | Pause menu |
 | − | Gyro recenter: levels the view; gyro aiming is paused while held |
 
-Gyro aiming is on by default and adds to the right stick. Keep the GamePad still for a few seconds after
-starting so the gyro can calibrate. To recenter, hold −, move the GamePad back to a comfortable position
-and let go. Gyro aiming can be turned off, inverted or made faster/slower in Configuration → Gamepad → Gyroscope. Buttons can be rebound in Configuration → Controls; stick speed is in
+Gyro aiming is on by default and adds to the right stick. Keep the GamePad still while the game starts,
+until a few seconds after the main menu appears, so the gyro can calibrate; otherwise the view slowly
+drifts. To recenter,
+hold −, move the GamePad back to a comfortable position and let go. Gyro aiming can be turned off, inverted or made faster/slower in
+Configuration → Gamepad → Gyroscope. Buttons can be rebound in Configuration → Controls; stick speed is in
 Configuration → Gamepad.
+
+To report a problem, put `-log` in `sd:/halflife/cmdline.txt`; the game then writes its log to
+`sd:/halflife/engine.log`.
 
 ## Building
 

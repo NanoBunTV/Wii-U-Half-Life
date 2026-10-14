@@ -311,6 +311,23 @@ index 6af7e3d..af3f836 100644
  #else
  #include "platform/posix/net.h"
  #endif
+diff --git a/engine/common/sys_con.c b/engine/common/sys_con.c
+index b4e5bb2..8067fea 100644
+--- a/engine/common/sys_con.c
++++ b/engine/common/sys_con.c
+@@ -85,7 +85,12 @@ void Sys_InitLog( void )
+ 	if( Sys_CheckParm( "-log" ))
+ 	{
+ 		if( !Sys_GetParmFromCmdLine( "-log", s_ld.log_path ) || !isalnum((byte)s_ld.log_path[0] ))
++#if XASH_WIIU
++			// the working directory isn't set yet, write to sd:/halflife
++			Q_strncpy( s_ld.log_path, "fs:/vol/external01/halflife/engine.log", sizeof( s_ld.log_path ));
++#else
+ 			Q_strncpy( s_ld.log_path, "engine.log", sizeof( s_ld.log_path ));
++#endif
+ 
+ 		COM_DefaultExtension( s_ld.log_path, ".log", sizeof( s_ld.log_path ));
+ 		s_ld.log_active = true;
 diff --git a/engine/common/system.c b/engine/common/system.c
 index 522ba25..b9f50ad 100644
 --- a/engine/common/system.c
@@ -451,7 +468,7 @@ index fbcc883..15f9354 100644
  }
  
 diff --git a/engine/platform/sdl2/joy_sdl2.c b/engine/platform/sdl2/joy_sdl2.c
-index 99d45b0..7d661f9 100644
+index 99d45b0..4f783b8 100644
 --- a/engine/platform/sdl2/joy_sdl2.c
 +++ b/engine/platform/sdl2/joy_sdl2.c
 @@ -19,6 +19,9 @@ GNU General Public License for more details.
@@ -464,7 +481,34 @@ index 99d45b0..7d661f9 100644
  
  static const int g_button_mapping[] =
  {
-@@ -154,6 +157,15 @@ static void SDLash_GameControllerAddMappings( const char *name )
+@@ -78,6 +81,13 @@ static void SDLash_RestartCalibration( void )
+ 	if( !gyrocal.data_rate )
+ 		gyrocal.data_rate = 10.0f;
+ 
++#if XASH_WIIU
++	// the GamePad gyro arrives once per frame (SDLash_WiiUGyroFrame), and the first seconds are spent
++	// loading the menu at a frame or two per second: want 20 samples, however long that takes (see
++	// SDLash_FinalizeCalibration)
++	gyrocal.data_rate = 8.0f;
++#endif
++
+ 	Con_Printf( S_NOTE "Starting gyroscope calibration at %g data rate for %g seconds...\n", gyrocal.data_rate, CALIBRATION_TIME );
+ }
+ 
+@@ -90,6 +100,12 @@ static void SDLash_FinalizeCalibration( void )
+ 	{
+ 		if( !gyrocal.continuous )
+ 		{
++#if XASH_WIIU
++			// the GamePad is always there, too few samples only means a low frame rate: keep collecting
++			// instead of leaving the gyro off for good
++			gyrocal.time = host.realtime + 0.5f;
++			return;
++#endif
+ 			Joy_SetCalibrationState( JOY_FAILED_TO_CALIBRATE );
+ 			Con_Printf( S_ERROR "Calibration failed, got samples %d < %d\n", gyrocal.samples, min_samples );
+ 			gyrocal.time = 0.0f;
+@@ -154,6 +170,15 @@ static void SDLash_GameControllerAddMappings( const char *name )
  	Mem_Free( p );
  }
  
@@ -480,7 +524,7 @@ index 99d45b0..7d661f9 100644
  static void SDLash_SetActiveGameController( SDL_JoystickID id )
  {
  	if( g_current_gamepad_id == id )
-@@ -191,6 +203,15 @@ static void SDLash_SetActiveGameController( SDL_JoystickID id )
+@@ -191,6 +216,17 @@ static void SDLash_SetActiveGameController( SDL_JoystickID id )
  		}
  #endif // SDL_VERSION_ATLEAST( 2, 0, 14 )
  
@@ -488,32 +532,65 @@ index 99d45b0..7d661f9 100644
 +		// the GamePad has a gyro, but SDL doesn't know (see SDLash_WiiUGyroFrame)
 +		if( SDLash_IsWiiUGamePad( g_current_gamepad ))
 +		{
-+			have_gyro = true;
++			// the GamePad gyro has a zero offset of several degrees per second, so it needs the
++			// calibration (on the raw gyro axes, see SDLash_WiiUGyroToView)
 +			SDLash_RestartCalibration();
++			have_gyro = true;
 +		}
 +#endif
 +
  		Joy_SetCapabilities( have_gyro, num_touchpads );
  	}
  }
-@@ -261,34 +282,105 @@ static void SDLash_GameControllerRemoved( SDL_JoystickID id )
+@@ -261,34 +297,164 @@ static void SDLash_GameControllerRemoved( SDL_JoystickID id )
  	}
  }
  
 -#if SDL_VERSION_ATLEAST( 2, 0, 14 )
 -static void SDLash_GameControllerSensorUpdate( SDL_ControllerSensorEvent sensor )
-+#if SDL_VERSION_ATLEAST( 2, 0, 14 ) || XASH_WIIU
-+// gyro sample in radians per second: pitch, yaw, roll
-+static void SDLash_GyroSample( float *sample )
++#if XASH_WIIU
++// smoothed accelerometer: points up, in GamePad axes (SDLash_WiiUGyroFrame)
++static vec3_t wiiu_gravity;
++
++/*
++=============
++SDLash_WiiUGyroToView
++
++Turn a calibrated GamePad rotation (radians per second around the GamePad's own x/y/z axes) into
++pitch (positive = up), yaw (positive = left) and roll for Joy_GyroEvent.
++
++GamePad axes (verified on hardware): x runs along the long side, z along the short side, y through
++the screen. Looking up gives a negative x rate. The accelerometer gives the up axis (about 0 0 -1 held
++upright, 0 -1 0 lying flat), and turning left is a negative rate around it, at any holding angle.
++(Cemu's SDL->VPAD conversion, MotionSample.h, suggested the opposite yaw sign.)
++=============
++*/
++static void SDLash_WiiUGyroToView( vec3_t data )
  {
- 	vec3_t data;
+-	vec3_t data;
++	vec3_t raw, up = { 0.0f, 0.0f, -1.0f }; // held upright until the accelerometer says otherwise
++	float len = VectorLength( wiiu_gravity );
  
 -	if( sensor.which != g_current_gamepad_id )
 -		return;
--
++	if( len > 0.5f )
++		VectorScale( wiiu_gravity, 1.0f / len, up );
+ 
 -	if( sensor.sensor != SDL_SENSOR_GYRO )
 -		return;
--
++	VectorCopy( data, raw );
++	data[0] = -raw[0];                               // pitch
++	data[1] = -DotProduct( raw, up );                // yaw, around gravity (sign confirmed on hardware)
++	data[2] = raw[1] * up[2] - raw[2] * up[1];       // roll, around the axis facing the player
++}
++#endif
++
++#if SDL_VERSION_ATLEAST( 2, 0, 14 ) || XASH_WIIU
++// gyro sample in radians per second: pitch, yaw, roll (Wii U: raw GamePad axes, see SDLash_WiiUGyroToView)
++static void SDLash_GyroSample( float *sample )
++{
++	vec3_t data;
+ 
  	if( gyrocal.time != 0.0f )
  	{
  		if( host.realtime > gyrocal.time )
@@ -529,6 +606,10 @@ index 99d45b0..7d661f9 100644
  
 -	VectorSubtract( sensor.data, gyrocal.calibrated_values, data );
 +	VectorSubtract( sample, gyrocal.calibrated_values, data );
++#if XASH_WIIU
++	// calibrate the raw axes: the zero offset is per axis, the view axes change with the holding angle
++	SDLash_WiiUGyroToView( data );
++#endif
  	Joy_GyroEvent( data );
  }
  #endif
@@ -560,6 +641,7 @@ index 99d45b0..7d661f9 100644
 +int32_t __real_VPADRead( VPADChan chan, VPADStatus *buffers, uint32_t count, VPADReadError *outError );
 +
 +static vec3_t wiiu_gyro_sum;
++static vec3_t wiiu_acc_sum;
 +static int wiiu_gyro_samples;
 +
 +int32_t __wrap_VPADRead( VPADChan chan, VPADStatus *buffers, uint32_t count, VPADReadError *outError )
@@ -573,6 +655,9 @@ index 99d45b0..7d661f9 100644
 +			wiiu_gyro_sum[0] += buffers[i].gyro.x;
 +			wiiu_gyro_sum[1] += buffers[i].gyro.y;
 +			wiiu_gyro_sum[2] += buffers[i].gyro.z;
++			wiiu_acc_sum[0] += buffers[i].accelorometer.acc.x;
++			wiiu_acc_sum[1] += buffers[i].accelorometer.acc.y;
++			wiiu_acc_sum[2] += buffers[i].accelorometer.acc.z;
 +			wiiu_gyro_samples++;
 +		}
 +	}
@@ -590,16 +675,35 @@ index 99d45b0..7d661f9 100644
 +*/
 +void SDLash_WiiUGyroFrame( void )
 +{
-+	vec3_t sample;
-+	float scale;
++	static qboolean reported;
++	vec3_t sample, acc;
++	float scale, blend;
 +
 +	if( !wiiu_gyro_samples )
 +		return;
++
++	// accelerometer in g: smooth it (~0.2 s) so shaking and walking don't tilt the yaw axis
++	VectorScale( wiiu_acc_sum, 1.0f / wiiu_gyro_samples, acc );
++	if( VectorIsNull( wiiu_gravity ))
++		VectorCopy( acc, wiiu_gravity );
++	else
++	{
++		blend = bound( 0.0f, host.realframetime / 0.2f, 1.0f );
++		VectorLerp( wiiu_gravity, blend, acc, wiiu_gravity );
++	}
++
++	if( !reported )
++	{
++		Con_Printf( "GamePad gyro: receiving samples (gyro %g %g %g, acc %g %g %g)\n",
++			wiiu_gyro_sum[0], wiiu_gyro_sum[1], wiiu_gyro_sum[2], acc[0], acc[1], acc[2] );
++		reported = true;
++	}
 +
 +	// VPAD reports revolutions per second
 +	scale = ( 2.0f * M_PI ) / wiiu_gyro_samples;
 +	VectorScale( wiiu_gyro_sum, scale, sample );
 +	VectorClear( wiiu_gyro_sum );
++	VectorClear( wiiu_acc_sum );
 +	wiiu_gyro_samples = 0;
 +
 +	if( !SDLash_IsWiiUGamePad( g_current_gamepad ))
@@ -627,21 +731,36 @@ index 3670a9d..e232ef2 100644
  //
  // sensor_sdl2.c
 diff --git a/engine/platform/sdl2/vid_sdl2.c b/engine/platform/sdl2/vid_sdl2.c
-index e85afd2..a5ab106 100644
+index e85afd2..6f7dbb2 100644
 --- a/engine/platform/sdl2/vid_sdl2.c
 +++ b/engine/platform/sdl2/vid_sdl2.c
-@@ -43,6 +43,10 @@ struct
+@@ -43,6 +43,25 @@ struct
  	SDL_Surface *win;
  } sw;
  
 +#if XASH_WIIU
++#include "gx2gl/gx2gl.h" // OpenGL for ref_gl, see src/gx2gl in the port
++
 +extern convar_t vid_wiiu_render_height; // vid_common.c
++
++// the size the renderers draw at: vid_wiiu_render_height lines, the TV's aspect ratio; the image is
++// scaled to the TV and the GamePad
++static void VID_WiiURenderSize( int *w, int *h )
++{
++	if( *h > 0 )
++	{
++		int render_h = bound( VID_MIN_HEIGHT, (int)vid_wiiu_render_height.value, *h );
++
++		*w = *w * render_h / *h;
++		*h = render_h;
++	}
++}
 +#endif
 +
  void Platform_Minimize_f( void )
  {
  	if( host.hWnd )
-@@ -57,7 +61,9 @@ qboolean SW_CreateBuffer( int width, int height, uint *stride, uint *bpp, uint *
+@@ -57,7 +76,9 @@ qboolean SW_CreateBuffer( int width, int height, uint *stride, uint *bpp, uint *
  	if( sw.renderer )
  	{
  		unsigned int format = SDL_GetWindowPixelFormat( host.hWnd );
@@ -651,7 +770,7 @@ index e85afd2..a5ab106 100644
  
  		if( sw.tex )
  		{
-@@ -79,7 +85,22 @@ qboolean SW_CreateBuffer( int width, int height, uint *stride, uint *bpp, uint *
+@@ -79,7 +100,22 @@ qboolean SW_CreateBuffer( int width, int height, uint *stride, uint *bpp, uint *
  		if( SDL_BYTESPERPIXEL( format ) != 2 && SDL_BYTESPERPIXEL( format ) != 4 )
  			format = SDL_PIXELFORMAT_RGBA8888;
  
@@ -674,7 +793,7 @@ index e85afd2..a5ab106 100644
  
  		// fallback
  		if( !sw.tex && format != SDL_PIXELFORMAT_RGBA8888 )
-@@ -204,7 +225,11 @@ void SW_UnlockBuffer( void )
+@@ -204,7 +240,11 @@ void SW_UnlockBuffer( void )
  		SDL_SetTextureBlendMode(sw.tex, SDL_BLENDMODE_NONE);
  
  
@@ -686,31 +805,72 @@ index e85afd2..a5ab106 100644
  		SDL_RenderPresent(sw.renderer);
  
  		return;
-@@ -400,6 +425,18 @@ void VID_SaveWindowSize( int width, int height )
+@@ -332,7 +372,11 @@ GL_GetProcAddress
+ */
+ void *GL_GetProcAddress( const char *name )
+ {
++#if XASH_WIIU
++	void *func = GX2GL_GetProcAddress( name );
++#else
+ 	void *func = SDL_GL_GetProcAddress( name );
++#endif
+ 
+ #if XASH_PSVITA
+ 	// try to find in main module
+@@ -359,6 +403,10 @@ void GL_UpdateSwapInterval( void )
+ 	{
+ 		ClearBits( gl_vsync.flags, FCVAR_CHANGED );
+ 
++#if XASH_WIIU
++		GX2GL_SetSwapInterval( gl_vsync.value ? 1 : 0 );
++		return;
++#endif
+ 		if( SDL_GL_SetSwapInterval( gl_vsync.value ) < 0 )
+ 			Con_Reportf( S_ERROR  "SDL_GL_SetSwapInterval: %s\n", SDL_GetError( ));
+ 	}
+@@ -375,7 +423,11 @@ static qboolean GL_DeleteContext( void )
+ {
+ 	if( glw_state.context )
+ 	{
++#if XASH_WIIU
++		GX2GL_DestroyContext();
++#else
+ 		SDL_GL_DeleteContext( glw_state.context );
++#endif
+ 		glw_state.context = NULL;
+ 	}
+ 	return false;
+@@ -400,6 +452,12 @@ void VID_SaveWindowSize( int width, int height )
  
  	VID_GetWindowSizeInPixels( host.hWnd, sw.renderer, &render_w, &render_h );
  	VID_SetDisplayTransform( &render_w, &render_h );
 +
 +#if XASH_WIIU
 +	// also before the renderer exists, so the render size never changes during startup
-+	if( glw_state.software && render_h > 0 )
-+	{
-+		int h = bound( VID_MIN_HEIGHT, (int)vid_wiiu_render_height.value, render_h );
-+
-+		render_w = render_w * h / render_h; // keep the TV's aspect ratio
-+		render_h = h;
-+	}
++	VID_WiiURenderSize( &render_w, &render_h );
 +#endif
 +
  	R_SaveVideoMode( width, height, render_w, render_h, maximized );
  }
  
-@@ -701,8 +738,18 @@ static rserr_t VID_CreateWindow( const int input_width, const int input_height,
+@@ -669,8 +727,10 @@ static rserr_t VID_CreateWindow( const int input_width, const int input_height,
+ 	SetBits( flags, SDL_WINDOW_ALLOW_HIGHDPI );
+ #endif // !XASH_WIN32
+ 
++#if !XASH_WIIU // SDL has no OpenGL on Wii U, gx2gl draws instead
+ 	if( !glw_state.software )
+ 		SetBits( flags, SDL_WINDOW_OPENGL );
++#endif
+ 
+ 	if( vid_maximized.value )
+ 		SetBits( flags, SDL_WINDOW_MAXIMIZED );
+@@ -701,8 +761,18 @@ static rserr_t VID_CreateWindow( const int input_width, const int input_height,
  	if( glw_state.software )
  	{
  		char cmd[64];
 +		qboolean use_renderer = Sys_GetParmFromCmdLine( "-sdl_renderer", cmd );
-+
+ 
+-		if( Sys_GetParmFromCmdLine( "-sdl_renderer", cmd ))
 +#if XASH_WIIU
 +		// always, so the image can be scaled (see vid_wiiu_render_height)
 +		if( !use_renderer )
@@ -719,12 +879,101 @@ index e85afd2..a5ab106 100644
 +			use_renderer = true;
 +		}
 +#endif
- 
--		if( Sys_GetParmFromCmdLine( "-sdl_renderer", cmd ))
++
 +		if( use_renderer )
  		{
  			int sdl_renderer = Q_max( -1, Q_atoi( cmd ));
  
+@@ -722,6 +792,21 @@ static rserr_t VID_CreateWindow( const int input_width, const int input_height,
+ 	}
+ 	else
+ 	{
++#if XASH_WIIU
++		int render_w, render_h;
++
++		SDL_GetWindowSize( host.hWnd, &render_w, &render_h );
++		VID_WiiURenderSize( &render_w, &render_h );
++
++		if( !GX2GL_CreateContext( render_w, render_h ))
++		{
++			Con_Printf( S_ERROR "%s: GX2GL_CreateContext failed\n", __func__ );
++			err = rserr_invalid_context;
++			goto cleanup;
++		}
++
++		glw_state.context = (SDL_GLContext)1; // just a marker, gx2gl has one context
++#else
+ 		glw_state.context = SDL_GL_CreateContext( host.hWnd );
+ 
+ 		if( !glw_state.context )
+@@ -737,6 +822,7 @@ static rserr_t VID_CreateWindow( const int input_width, const int input_height,
+ 			err = rserr_invalid_context;
+ 			goto cleanup;
+ 		}
++#endif
+ 	}
+ 
+ 	// update window size if it was resized
+@@ -748,11 +834,7 @@ static rserr_t VID_CreateWindow( const int input_width, const int input_height,
+ 	return rserr_ok;
+ 
+ cleanup:
+-	if( glw_state.context )
+-	{
+-		SDL_GL_DeleteContext( glw_state.context );
+-		glw_state.context = NULL;
+-	}
++	GL_DeleteContext();
+ 
+ 	if( sw.renderer )
+ 	{
+@@ -801,11 +883,18 @@ static void GL_SetupAttributes( void )
+ 
+ void GL_SwapBuffers( void )
+ {
++#if XASH_WIIU
++	GX2GL_SwapBuffers();
++#else
+ 	SDL_GL_SwapWindow( host.hWnd );
++#endif
+ }
+ 
+ int GL_SetAttribute( int attr, int val )
+ {
++#if XASH_WIIU
++	return 0; // gx2gl has a fixed format
++#endif
+ 	switch( attr )
+ 	{
+ #define MAP_REF_API_ATTRIBUTE_TO_SDL( name ) case REF_##name: return SDL_GL_SetAttribute( SDL_##name, val );
+@@ -851,6 +940,17 @@ int GL_SetAttribute( int attr, int val )
+ 
+ int GL_GetAttribute( int attr, int *val )
+ {
++#if XASH_WIIU
++	// gx2gl: RGBA8 colour, 24-bit depth (32-bit float), no stencil
++	switch( attr )
++	{
++	case REF_GL_RED_SIZE: case REF_GL_GREEN_SIZE: case REF_GL_BLUE_SIZE: case REF_GL_ALPHA_SIZE: *val = 8; break;
++	case REF_GL_DEPTH_SIZE: *val = 24; break;
++	case REF_GL_DOUBLEBUFFER: case REF_GL_ACCELERATED_VISUAL: *val = 1; break;
++	default: *val = 0; break;
++	}
++	return 0;
++#endif
+ 	switch( attr )
+ 	{
+ #define MAP_REF_API_ATTRIBUTE_TO_SDL( name ) case REF_##name: return SDL_GL_GetAttribute( SDL_##name, val );
+@@ -929,6 +1029,9 @@ qboolean R_Init_Video( ref_graphic_apis_t type )
+ 		// refdll can request some attributes
+ 		GL_SetupAttributes( );
+ 
++#if XASH_WIIU
++		break; // no GL library, gx2gl is linked in
++#endif
+ 		if( SDL_GL_LoadLibrary( EGL_LIB ) < 0 )
+ 		{
+ 			Con_Reportf( S_ERROR  "Couldn't initialize OpenGL: %s\n", SDL_GetError());
 diff --git a/filesystem/dir.c b/filesystem/dir.c
 index 64ac45c..0b7aae3 100644
 --- a/filesystem/dir.c

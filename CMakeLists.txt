@@ -90,13 +90,22 @@ target_compile_options(filesystem_obj PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-fno-exc
 xash_static_library(filesystem_stdio OBJLIBS filesystem_obj EXPORTS_FILE "${CMAKE_SOURCE_DIR}/exports/filesystem_stdio.txt")
 
 # ---------------------------------------------------------------------------------------------------
-# ref_soft (software renderer; ref_gx2 will be added next to it)
+# ref_soft (software renderer, the fallback)
 # ---------------------------------------------------------------------------------------------------
 file(GLOB REF_SOFT_SOURCES "${XASH_DIR}/ref/common/*.c" "${XASH_DIR}/ref/soft/*.c")
 add_library(ref_soft_obj OBJECT ${REF_SOFT_SOURCES})
 target_include_directories(ref_soft_obj PRIVATE "${XASH_DIR}/ref/soft" "${XASH_DIR}/ref/common" ${XASH_ENGINE_INCLUDES})
 target_compile_definitions(ref_soft_obj PRIVATE REF_DLL=1)
 xash_static_library(ref_soft OBJLIBS ref_soft_obj EXPORTS_FILE "${CMAKE_SOURCE_DIR}/exports/ref.txt")
+
+# ---------------------------------------------------------------------------------------------------
+# ref_gl (OpenGL renderer, unchanged; its GL calls go to gx2gl in the engine, see src/gx2gl)
+# ---------------------------------------------------------------------------------------------------
+file(GLOB REF_GL_SOURCES "${XASH_DIR}/ref/common/*.c" "${XASH_DIR}/ref/gl/*.c" "${XASH_DIR}/ref/gl/gl2_shim/*.c")
+add_library(ref_gl_obj OBJECT ${REF_GL_SOURCES})
+target_include_directories(ref_gl_obj PRIVATE "${XASH_DIR}/ref/gl" "${XASH_DIR}/ref/common" ${XASH_ENGINE_INCLUDES})
+target_compile_definitions(ref_gl_obj PRIVATE REF_DLL=1)
+xash_static_library(ref_gl OBJLIBS ref_gl_obj EXPORTS_FILE "${CMAKE_SOURCE_DIR}/exports/ref.txt")
 
 # ---------------------------------------------------------------------------------------------------
 # menu (mainui_cpp)
@@ -140,7 +149,8 @@ file(GLOB ENGINE_SOURCES
 	"${XASH_DIR}/engine/client/*/*/*.c")
 list(APPEND ENGINE_SOURCES
 	"${XASH_DIR}/engine/platform/misc/lib_static.c"
-	"${CMAKE_SOURCE_DIR}/src/platform/wiiu/sys_wiiu.c")
+	"${CMAKE_SOURCE_DIR}/src/platform/wiiu/sys_wiiu.c"
+	"${CMAKE_SOURCE_DIR}/src/gx2gl/gx2gl.c")
 
 get_property(XASH_RELOC_OBJECTS GLOBAL PROPERTY XASH_STATIC_LIB_OBJECTS)
 get_property(XASH_RELOC_TARGETS GLOBAL PROPERTY XASH_STATIC_LIB_TARGETS)
@@ -159,6 +169,7 @@ target_compile_definitions(halflife PRIVATE
 	XASH_ENABLE_MAIN=1
 	ENGINE_DLL=1
 	XASH_SDL=2
+	XASH_REF_GL_ENABLED=1
 	XASH_REF_SOFT_ENABLED=1
 	XASH_GAMEDIR="valve")
 target_link_libraries(halflife PRIVATE

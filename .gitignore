@@ -10,3 +10,6 @@ CLAUDE.md
 # local test data / logs
 /Docs/tools/__pycache__/
 *.log
+
+# downloaded build tools (latte-assembler from decaf-emu, see Docs/BUILDING.md)
+/tools/latte-assembler/

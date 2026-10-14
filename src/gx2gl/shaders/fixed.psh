@@ -1,0 +1,128 @@
+; gx2gl fixed-function pixel shader (assembled with latte-assembler, see scripts/build-shaders.ps1)
+;
+; Inputs: R0 colour, R1 texcoord 0, R2 texcoord 1, R3.x fog factor (1 = no fog)
+; Both texture units are always sampled; a disabled unit has a 1x1 white texture bound and weights
+; that pass the colour through.
+;
+; Texture environment per unit, c = incoming colour, t = texel, all per component:
+;   out = clamp( c*t*K0 + t*K1 + c*K2 + (t - c)*t.a*K3 )
+;   GL_MODULATE K0 = 1   GL_REPLACE K1 = 1   GL_DECAL rgb K2 = K3 = 1, alpha K2 = 1
+;   GL_ADD rgb K1 = K2 = 1, alpha K0 = 1     disabled K2 = 1     GL_RGB_SCALE scales the rgb weights
+; Uniforms: C0-C3 = K0-K3 of unit 0, C4-C7 = K0-K3 of unit 1,
+;   C8.x = alpha test reference (the pixel is killed if C8.x >= alpha; -1 = no alpha test),
+;   C9 = fog colour
+;
+; Hardware rules this follows by hand (the assembler doesn't check them): one constant register per
+; instruction group, and no two different GPRs read on the same channel in the same source slot.
+
+; $MODE = "UniformRegister"
+
+; $NUM_SPI_PS_INPUT_CNTL = 4
+; $SPI_PS_INPUT_CNTL[0].SEMANTIC = 0
+; $SPI_PS_INPUT_CNTL[0].DEFAULT_VAL = 1
+; $SPI_PS_INPUT_CNTL[1].SEMANTIC = 1
+; $SPI_PS_INPUT_CNTL[1].DEFAULT_VAL = 1
+; $SPI_PS_INPUT_CNTL[2].SEMANTIC = 2
+; $SPI_PS_INPUT_CNTL[2].DEFAULT_VAL = 1
+; $SPI_PS_INPUT_CNTL[3].SEMANTIC = 3
+; $SPI_PS_INPUT_CNTL[3].DEFAULT_VAL = 1
+
+; $DB_SHADER_CONTROL.KILL_ENABLE = true
+
+; $UNIFORM_VARS[0].name = "u_env0"
+; $UNIFORM_VARS[0].type = "vec4"
+; $UNIFORM_VARS[0].count = 4
+; $UNIFORM_VARS[0].block = -1
+; $UNIFORM_VARS[0].offset = 0
+; $UNIFORM_VARS[1].name = "u_env1"
+; $UNIFORM_VARS[1].type = "vec4"
+; $UNIFORM_VARS[1].count = 4
+; $UNIFORM_VARS[1].block = -1
+; $UNIFORM_VARS[1].offset = 16
+; $UNIFORM_VARS[2].name = "u_alpharef"
+; $UNIFORM_VARS[2].type = "vec4"
+; $UNIFORM_VARS[2].count = 1
+; $UNIFORM_VARS[2].block = -1
+; $UNIFORM_VARS[2].offset = 32
+; $UNIFORM_VARS[3].name = "u_fogcolor"
+; $UNIFORM_VARS[3].type = "vec4"
+; $UNIFORM_VARS[3].count = 1
+; $UNIFORM_VARS[3].block = -1
+; $UNIFORM_VARS[3].offset = 36
+
+; $SAMPLER_VARS[0].name = "u_tex0"
+; $SAMPLER_VARS[0].type = "SAMPLER2D"
+; $SAMPLER_VARS[0].location = 0
+; $SAMPLER_VARS[1].name = "u_tex1"
+; $SAMPLER_VARS[1].type = "SAMPLER2D"
+; $SAMPLER_VARS[1].location = 1
+
+00 TEX: ADDR(96) CNT(2) VALID_PIX
+    0  SAMPLE R4, R1.xy0x, t0, s0
+    1  SAMPLE R5, R2.xy0x, t1, s1
+01 ALU: ADDR(32) CNT(63)
+    2  x: MUL    ____,   R0.x, R4.x
+       y: MUL    ____,   R0.y, R4.y
+       z: MUL    ____,   R0.z, R4.z
+       w: MUL    ____,   R0.w, R4.w
+    3  x: MUL    ____,   PV2.x, C0.x
+       y: MUL    ____,   PV2.y, C0.y
+       z: MUL    ____,   PV2.z, C0.z
+       w: MUL    ____,   PV2.w, C0.w
+    4  x: MULADD R127.x,   R4.x, C1.x, PV3.x
+       y: MULADD R127.y,   R4.y, C1.y, PV3.y
+       z: MULADD R127.z,   R4.z, C1.z, PV3.z
+       w: MULADD R127.w,   R4.w, C1.w, PV3.w
+    5  x: MULADD R6.x,   R0.x, C2.x, PV4.x
+       y: MULADD R6.y,   R0.y, C2.y, PV4.y
+       z: MULADD R6.z,   R0.z, C2.z, PV4.z
+       w: MULADD R6.w,   R0.w, C2.w, PV4.w
+    6  x: ADD    ____,   R4.x, -R0.x
+       y: ADD    ____,   R4.y, -R0.y
+       z: ADD    ____,   R4.z, -R0.z
+       w: ADD    ____,   R4.w, -R0.w
+    7  x: MUL    ____,   PV6.x, R4.w
+       y: MUL    ____,   PV6.y, R4.w
+       z: MUL    ____,   PV6.z, R4.w
+       w: MUL    ____,   PV6.w, R4.w
+    8  x: MULADD R6.x,   PV7.x, C3.x, R6.x CLAMP
+       y: MULADD R6.y,   PV7.y, C3.y, R6.y CLAMP
+       z: MULADD R6.z,   PV7.z, C3.z, R6.z CLAMP
+       w: MULADD R6.w,   PV7.w, C3.w, R6.w CLAMP
+    9  x: MUL    ____,   R6.x, R5.x
+       y: MUL    ____,   R6.y, R5.y
+       z: MUL    ____,   R6.z, R5.z
+       w: MUL    ____,   R6.w, R5.w
+   10  x: MUL    ____,   PV9.x, C4.x
+       y: MUL    ____,   PV9.y, C4.y
+       z: MUL    ____,   PV9.z, C4.z
+       w: MUL    ____,   PV9.w, C4.w
+   11  x: MULADD R127.x,   R5.x, C5.x, PV10.x
+       y: MULADD R127.y,   R5.y, C5.y, PV10.y
+       z: MULADD R127.z,   R5.z, C5.z, PV10.z
+       w: MULADD R127.w,   R5.w, C5.w, PV10.w
+   12  x: MULADD R7.x,   R6.x, C6.x, PV11.x
+       y: MULADD R7.y,   R6.y, C6.y, PV11.y
+       z: MULADD R7.z,   R6.z, C6.z, PV11.z
+       w: MULADD R7.w,   R6.w, C6.w, PV11.w
+   13  x: ADD    ____,   R5.x, -R6.x
+       y: ADD    ____,   R5.y, -R6.y
+       z: ADD    ____,   R5.z, -R6.z
+       w: ADD    ____,   R5.w, -R6.w
+   14  x: MUL    ____,   PV13.x, R5.w
+       y: MUL    ____,   PV13.y, R5.w
+       z: MUL    ____,   PV13.z, R5.w
+       w: MUL    ____,   PV13.w, R5.w
+   15  x: MULADD R7.x,   PV14.x, C7.x, R7.x CLAMP
+       y: MULADD R7.y,   PV14.y, C7.y, R7.y CLAMP
+       z: MULADD R7.z,   PV14.z, C7.z, R7.z CLAMP
+       w: MULADD R7.w,   PV14.w, C7.w, R7.w CLAMP
+   16  x: KILLGE ____,   C8.x, R7.w
+   17  x: ADD    ____,   R7.x, -C9.x
+       y: ADD    ____,   R7.y, -C9.y
+       z: ADD    ____,   R7.z, -C9.z
+   18  x: MULADD R7.x,   PV17.x, R3.x, C9.x
+       y: MULADD R7.y,   PV17.y, R3.x, C9.y
+       z: MULADD R7.z,   PV17.z, R3.x, C9.z
+02 EXP_DONE: PIX0, R7
+END_OF_PROGRAM

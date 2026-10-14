@@ -136,6 +136,6 @@ Window captures (`capture-cemu.ps1`) of the Vulkan window are reliable; the froz
 |---|---|
 | `-dev 2` | Verbose developer messages (file loading, DLL setup...) |
 | `-console` | Enables the console (it's already allowed by default on Wii U) |
-| `-log` | Also write `engine.log` into `sd:/halflife/` |
+| `-log` | Also write `sd:/halflife/engine.log` (on Wii U the default path is absolute, `sys_con.c`: the working directory isn't set yet when the log opens). The easiest way to get a log from real hardware |
 | `+map c1a0` | Start a map directly, skipping the menu |
 | `-watchdog <s>` | Hang watchdog (see above) |

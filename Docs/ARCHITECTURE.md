@@ -11,6 +11,8 @@
 | `cmake/HLSDK.cmake` | hlsdk-portable server and client (+ FreeVGUI). Source lists are read from hlsdk-portable's own CMakeLists |
 | `exports/*.txt` | Export lists for the engine's own libraries (filesystem, renderer, menu) |
 | `src/platform/wiiu/` | Wii U platform layer: `sys_wiiu.c` (startup, paths, logging, crash handler, watchdog), `net_wiiu.h` (socket compatibility) |
+| `src/gx2gl/` | OpenGL 1.x subset on GX2 for `ref_gl` (see "Hardware rendering" below); `shaders/` holds the GPU assembly and the generated header |
+| `tools/` | Downloaded build tools, not in git (`latte-assembler`, see BUILDING.md) |
 | `meta/` | `.wuhb` icon and splash screens; `meta/art/make_art.ps1` regenerates them |
 | `patches/` | The port's changes to the upstream sources (see BUILDING.md) |
 | `external/` | Upstream sources, not in git: `xash3d-fwgs/`, `hlsdk-portable/` (fetched by `scripts/fetch-deps.ps1`) |
@@ -69,7 +71,7 @@ It mirrors upstream's `engine/wscript` for a client build:
 - **Not built:**
   - mbedTLS (no HTTPS downloads)
   - ffmpeg (no video playback)
-  - the GL renderers (no OpenGL on Wii U)
+  - the GLES renderer variants (`ref_gl` itself is built, on gx2gl, see below)
   - libbacktrace
   - the dedicated server
 
@@ -99,10 +101,11 @@ devkitPro's `wiiu-sdl2`. That covers the GamePad, Pro Controller and Wiimote+Nun
 (ProcUI) and AX audio.
 
 **Video output:** SDL's Wii U window always has the TV scan mode's size (1920x1080, 1280x720 or 854x480).
-The software renderer draws at `vid_wiiu_render_height` lines instead (default 720, width follows the TV's
+`ref_gl` (see "Hardware rendering") and the software renderer draw at `vid_wiiu_render_height` lines instead (default 720, width follows the TV's
 aspect ratio; saved in `video.cfg`, takes effect after a restart). `vid_sdl2.c` always uses SDL_Renderer
 (the GX2 backend) on Wii U: ref_soft writes into the top-left corner of a TV-sized RGBX streaming
-texture, and that corner is stretched to the screen. DEBUGGING.md explains why it's done this way.
+texture, and that corner is stretched to the screen (`ref_soft` only; DEBUGGING.md explains why it's done
+this way).
 
 Engine changes for the port are guarded by `#if XASH_WIIU`. They include:
 
@@ -117,7 +120,9 @@ Engine changes for the port are guarded by `#if XASH_WIIU`. They include:
   sample is returned once; SDL detects button presses from the samples' trigger/release bits). So the
   link wraps `VPADRead` (`-Wl,--wrap=VPADRead`, `__wrap_VPADRead` in `joy_sdl2.c`) and collects the gyro
   from SDL's own reads; `SDLash_WiiUGyroFrame` feeds the average to the engine's normal gyro calibration
-  and aiming every frame;
+  and aiming every frame. Calibration runs on the raw GamePad axes; `SDLash_WiiUGyroToView` then converts
+  them to pitch (−x) and yaw around gravity (from the accelerometer, so any holding angle works);
+- `-log` writes `sd:/halflife/engine.log` (`sys_con.c`, absolute default path on Wii U);
 - `+gyro_recenter` (−): levels the view and pauses gyro aiming while held (`in_joy.c`);
 - HOME → Close (`SDL_QUIT`) quits immediately instead of opening the menu's quit dialog (`host_sdl2.c`);
 - menu entries that make no sense on a console hidden in mainui (`mainui.patch`).
@@ -134,10 +139,37 @@ sd:/halflife/cmdline.txt        optional extra engine arguments, e.g. "-dev 2 -c
 
 The engine writes `config.cfg`, saves (`valve/SAVE/`) and logs inside `sd:/halflife/valve/`.
 
-## Planned: ref_gx2
+## Hardware rendering: ref_gl on gx2gl
 
-A hardware renderer is planned as a new `ref/gx2` library, exported as `"ref_gx2"`. It would implement
-`ref_interface_t` (`engine/ref_api.h`, `REF_API_VERSION 20`), probably starting from a copy of `ref/gl`.
-Shaders would be precompiled for GX2, or compiled at runtime with CafeGLSL. The engine would also need a
-`REF_GX2` graphics API value, or the renderer would create its own GX2 context the way `ref_soft` does through
-the `SW_*` callbacks.
+Instead of a new renderer, the engine's own OpenGL renderer (`ref/gl`, unchanged, built as the static
+library `ref_gl`) runs on **gx2gl** (`src/gx2gl/`), a small OpenGL 1.3 subset written on top of GX2. This is
+how the Wii (OpenGX) and PS Vita (vitaGL) ports of Xash3D work too. `ref_gl` takes its GL functions from the
+engine's `GL_GetProcAddress`, which on Wii U is `GX2GL_GetProcAddress`.
+
+- **Engine side (`vid_sdl2.c`, `XASH_WIIU`):** no `SDL_WINDOW_OPENGL` and no SDL GL library. The "context"
+  is `GX2GL_CreateContext(render size)`, swap is `GX2GL_SwapBuffers`, vsync is `GX2GL_SetSwapInterval`. GL
+  attributes are fixed (RGBA8, 24-bit depth, no stencil). The render size is `vid_wiiu_render_height` (as for
+  `ref_soft`, `VID_WiiURenderSize`). The engine tries `gl` first and falls back to `soft`; `-ref soft` /
+  `-ref gl` choose, and the last renderer that worked is saved as `r_refdll` in `video.cfg`.
+- **What gx2gl reports:** GL 1.3, 2 texture units, `GL_ARB_multitexture`, `GL_ARB_texture_env_combine`,
+  `GL_ARB_texture_env_add`, `GL_EXT_texture_edge_clamp`, `GL_ARB_texture_non_power_of_two`. No VBOs, so
+  `ref_gl` uses its classic immediate-mode path. Every OpenGL 1.1 function `ref_gl` looks up exists, some as
+  stubs (see below).
+- **Drawing:** immediate mode and client arrays are converted on the CPU into one vertex format (position,
+  colour, two texcoords, 48 bytes) and triangle/line/point lists in a vertex ring buffer (2 × 6 MB, one half
+  per frame in flight, guarded by GPU timestamps). Consecutive primitives with the same state are one draw
+  call; every state change flushes. The texture matrix is applied on the CPU.
+- **Shaders:** one fixed-function pair (`src/gx2gl/shaders/fixed.vsh/.psh`, GPU assembly, see BUILDING.md).
+  Texture environments (modulate, replace, decal, add, combine-modulate with `RGB_SCALE`) for both units are
+  one formula with per-unit weights in uniforms. Exponential fog is in the shaders; the alpha test is GX2's.
+- **Textures:** tiled RGBA8 GX2 textures with a full mip chain allocated up front. Uploads (also
+  `glTexSubImage2D`, e.g. lightmaps) are converted to RGBA8, written to a linear staging surface and copied
+  by the GPU (`GX2CopySurface(Ex)`). Memory the GPU may still use is freed one frame later.
+- **Output:** our own colour (RGBA8) and depth (float 32) buffers in MEM2, copied (scaled) to the TV and
+  GamePad scan buffers that SDL's video driver owns. Nothing is sent to the GPU in the background, checked
+  live with `ProcUIInForeground` before every GPU call or wait. A per-frame flag wasn't enough: after
+  HOME → Close the renderer shuts down in the background, and its `GX2DrawDone` never returned (the
+  system hung at the loading screen, 2026-10-14). Textures uploaded while in the background are lost.
+- **Differences from real OpenGL:** `GL_EQUAL` depth tests are done as `GL_LEQUAL` (lightmap passes
+  failed the exact test); `glReadPixels` returns black (screenshots); no stencil, `glTexGen`, clip planes,
+  polygon modes, `GL_TEXTURE_ENV_COLOR`, 1D/3D/cube textures; fog is always `GL_EXP`-style on eye-space z.

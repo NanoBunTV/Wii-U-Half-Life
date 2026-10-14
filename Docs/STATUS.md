@@ -15,6 +15,16 @@
 | 2026-10-13 | 1280x720 render size (`vid_wiiu_render_height`), stick look fix, menu cleanup | Cemu 2.6, recompiler | Menu at 60 FPS (was ~35); Hazard Course renders correctly, scaled to the TV |
 | 2026-10-13 | GamePad layout, gyro (own `VPADRead`), HOME → Close fix | **Real Wii U** (owner) | Gyro does nothing (see Known issues) |
 | 2026-10-13 | gyro via `__wrap_VPADRead`, − = gyro recenter | Cemu 2.6, recompiler | Binds correct, gyro calibrates (125 samples / 5 s); motion itself not testable in Cemu |
+| 2026-10-13 | same | **Real Wii U** (owner) | Still no gyro. `joy_debug` unusable: the on-screen keyboard is too slow at this frame rate |
+| 2026-10-14 | gyro starts calibrated (no startup calibration), `-log` → `sd:/halflife/engine.log` | Cemu 2.6, recompiler | `engine.log` written; log shows `GamePad gyro: receiving samples` |
+| 2026-10-14 | same | **Real Wii U** (owner) | Gyro reacts: up/down inverted, left/right nothing, steady drift down-left (offset ~0.014/0.013/0.024 rev/s in the log). − still toggled the gyro: the old bind was saved in `config.cfg` |
+| 2026-10-14 | GamePad axes converted to the view (gravity-based yaw), startup calibration back on raw axes (needs ≥ 3 samples) | Cemu 2.6, recompiler | Calibrates; no motion in Cemu |
+| 2026-10-14 | same | **Real Wii U** (owner) | Gyro off: `Calibration failed, got samples 2 < 3`. The menu loads at ~2 frames in the first 5 s. Accelerometer held upright ≈ (−0.01, −0.13, −0.97), as predicted |
+| 2026-10-14 | Wii U calibration never fails: keeps collecting until 20 samples | Cemu 2.6, recompiler | Calibration done (117 samples) |
+| 2026-10-14 | same | **Real Wii U** (owner) | **Gyro works great**, no drift; only left/right inverted (yaw sign flipped in the next build, not re-tested) |
+| 2026-10-14 | **ref_gl on gx2gl** (hardware rendering), `-ref gl` | Cemu 2.6, recompiler | **Menu correct at 60 FPS** (background, fonts, blending, animated logo). **Hazard Course renders**: textures, alpha-tested grates, depth, lightmaps (after the `GL_EQUAL` → `LEQUAL` fix). Looks brighter than `ref_soft` (GL overbright lighting) |
+| 2026-10-14 | same | **Real Wii U** (owner) | **Hazard Course at 30–60 FPS, "perfectly playable"**, nothing looks broken. HOME → Close hung at the system loading screen again: the log stops at `Shutting down audio.`, so the renderer's shutdown waited on the GPU in the background |
+| 2026-10-14 | gx2gl checks the foreground live before every GPU call | not tested yet | |
 
 ## Test checklist for new builds
 
@@ -38,27 +48,44 @@
 - **HOME → Close software hung** on real hardware ("booting Wii U Menu" never finished). Cause found:
   SDL turns the close request into `SDL_QUIT`, and the engine passed it to the menu's "quit?" dialog,
   which nobody can see or answer while the app is in the background. Fixed (2026-10-13, `host_sdl2.c`:
-  `SDL_QUIT` quits directly on Wii U); **not yet confirmed on hardware**. The in-game Quit hasn't been
-  tested on hardware either.
-- **Gyro didn't work on hardware** (owner, 2026-10-13). Likely cause: the gyro code called `VPADRead`
-  itself, after SDL had already taken the frame's sample (each sample is returned once on hardware; Cemu
-  throttles to one per 1/60 s, so Cemu still delivered some samples). This could also drop button
-  presses. Fixed by wrapping `VPADRead` at link time so SDL stays the only reader (ARCHITECTURE.md);
-  **not yet confirmed on hardware**. Cemu can't verify gyro motion. Still unverified: direction and speed
-  (assumed revolutions per second, axes x/y/z = pitch/yaw/roll). If it's wrong, fix the axes/sign/scale
-  in `SDLash_WiiUGyroFrame` (`joy_sdl2.c`); meanwhile `joy_gyro_pitch` / `joy_gyro_yaw` (negative =
-  inverted) adjust it. `joy_debug 1` shows live gyro bars; the log says `Calibration done` or
-  `Calibration failed` (fewer than 25 samples in 5 s, i.e. under 5 FPS at startup; `joy_calibrate_gyro`
-  retries).
+  `SDL_QUIT` quits directly on Wii U). The owner's hardware logs since then end with a clean
+  `Stopped with reason "caught SDL_QUIT"` and no hang was reported. The in-game Quit hasn't been tested
+  on hardware. With `-ref gl` it hung again (2026-10-14) for a different reason, gx2gl waiting on the GPU
+  in the background; fixed, not re-tested. A log that ends before `Stopped with reason` points to a hang in
+  the shutdown code after the last line.
+- **Gyro aiming: solved** (owner: "works great", 2026-10-14, with yaw flipped in the final build). The
+  path there, for future reference:
+  1. A second `VPADRead` caller starved the gyro and could steal button presses from SDL. Each sample is
+     returned once on hardware; Cemu throttles to one per 1/60 s, so Cemu hid the problem. Fixed by
+     wrapping `VPADRead` at link time (ARCHITECTURE.md).
+  2. The engine's startup calibration counts one sample per frame and failed at the menu's ~2 FPS
+     load, leaving the gyro off. On Wii U it now keeps collecting until it has 20 samples.
+  3. The GamePad gyro has a real zero offset (several °/s), so calibration is needed. It runs on the
+     raw GamePad axes.
+  4. The axes: pitch = −x; yaw = −(rotation around the smoothed accelerometer's up axis), so turning
+     works at any holding angle (`SDLash_WiiUGyroToView`). Cemu's SDL→VPAD conversion got pitch right
+     but suggested the wrong yaw sign.
+
+  Diagnosis: run with `-log` (cmdline.txt); `sd:/halflife/engine.log` shows
+  `GamePad gyro: receiving samples (gyro …, acc …)` and `Calibration done. Result: …`. Players can invert
+  or scale it in Configuration → Gamepad → Gyroscope.
+- **Changed default bindings don't reach existing installs:** the engine saves all bindings to
+  `config.cfg` on exit, and that file is loaded over the defaults. Testers must fix or delete the line
+  by hand (this happened with − on 2026-10-14).
 - **GamePad layout is re-applied after `unbindall`** (PC configs start with it and don't bind gamepad
   buttons). Rebinding works, but a GamePad button that's deliberately left unbound gets its default
   back on the next start.
 - **Cemu recompiler crash** in `_Mem_Realloc` with `-O2`, worked around by building `zone.c` at `-O0` (see
   DEBUGGING.md). Unknown whether real hardware is affected.
 - **Performance:** the software renderer is very slow on the real 1.24 GHz CPU (owner's first hardware
-  test). Cemu runs much faster than the hardware, so don't judge speed there. The engine now renders at
-  1280x720 (`vid_wiiu_render_height`, default 720, try 540 or 480) and the GPU scales it up; a GX2
-  renderer is the real fix and is needed before a release (roadmap).
+  test). Cemu runs much faster than the hardware, so don't judge speed there. The hardware renderer
+  (`ref_gl` on gx2gl, ARCHITECTURE.md) is the fix: 30–60 FPS in the Hazard Course on hardware. Until it's the default,
+  start it with `-ref gl` in `cmdline.txt` (the saved `r_refdll` in `video.cfg` otherwise keeps the
+  previous renderer). gx2gl still re-sends all GPU state per draw call and converts every vertex on the
+  CPU; both can be optimised once hardware numbers exist.
+- **gx2gl gaps:** screenshots are black (`glReadPixels`), no stencil (`ref_gl`'s stencil shadows off),
+  polygon offset scaling unverified (decals may z-fight), HOME menu with the GL renderer untested, the
+  `GL_EQUAL` → `LEQUAL` workaround (ARCHITECTURE.md).
 - **Settings hidden on Wii U:** video modes, touch controls, the update check, Previews and the mouse-only
   options (mouse sensitivity, invert mouse, mouse look, look strafe, mouse filter, raw input, input
   devices). Stick look speed is `joy_yaw` / `joy_pitch` in degrees per second (180 / 120); the mouse
@@ -72,10 +99,12 @@
 
 ## Roadmap
 
-1. Confirm on hardware: HOME → Close exits cleanly, gyro direction/speed, the GamePad layout (README).
-2. On-screen keyboard for the console and save names (SDL's Wii U swkbd).
-3. `ref_gx2`: a hardware renderer using GX2 (see ARCHITECTURE.md). **Required before release**: the
-   software renderer is far too slow on hardware.
+1. Hardware renderer (`ref_gl` on gx2gl, ARCHITECTURE.md), **required before release**: started
+   2026-10-14; the Hazard Course plays at 30–60 FPS on hardware. Next: HOME → Close (fix waiting for a
+   test), then the rest of the effects (sprites, studio models, water, sky, decals, particles) checked map by map, then
+   make it the default and optimise.
+2. Confirm on hardware: the gyro yaw flip, the in-game Quit.
+3. On-screen keyboard for the console and save names (SDL's Wii U swkbd).
 4. Play through the campaign in Cemu and on hardware; check whether the `zone.c` workaround is needed on
    hardware.
 5. Game selection plus Blue Shift (`bshift`) and Opposing Force (`gearbox`) game code. Both are in the Steam
