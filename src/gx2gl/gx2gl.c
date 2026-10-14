@@ -40,6 +40,7 @@ How it works (see also Docs/ARCHITECTURE.md):
 #include <whb/gfx.h>
 #include <whb/log.h>
 #include <proc_ui/procui.h>
+#include <coreinit/time.h>
 
 #include "gx2gl.h"
 #include "gx2gl_gl.h"
@@ -179,6 +180,14 @@ static struct
 	GLenum fogMode;
 	float fogDensity, fogStart, fogEnd, fogColor[4];
 	float pointSize, lineWidth;
+
+	// performance counters for r_speeds 6 (glGetString( GX2GL_STATS ))
+	struct
+	{
+		uint32_t frames, draws, verts;
+		OSTime waitGPU, waitFlip, periodStart;
+		char text[256];
+	} stats;
 } g;
 
 /*
@@ -328,6 +337,8 @@ static void GX2GL_Flush( void )
 		GX2Invalidate( GX2_INVALIDATE_MODE_CPU_ATTRIBUTE_BUFFER, g.batchStart, size );
 		GX2SetAttribBuffer( 0, size, sizeof( gxvert_t ), g.batchStart );
 		GX2DrawEx( modes[g.batchType], g.batchCount, 0, 1 );
+		g.stats.draws++;
+		g.stats.verts += g.batchCount;
 	}
 
 	g.batchCount = 0;
@@ -632,9 +643,34 @@ static void GX2GL_EnvWeights( int unit, int enabled, float *k )
 #undef K
 }
 
+// what GX2GL_ApplyState last sent; only changed groups are sent again
+static struct
+{
+	int valid;              // cleared when the GX2 context was set again (g.stateLost)
+	int viewport[4];
+	float depthRange[2];
+	int scissor[4];
+	int depth[3];
+	int blend[3];
+	int alpha[2];
+	float alphaRef;
+	int colorMask;
+	int polygon[4];
+	float offset[2];
+	float pointSize, lineWidth;
+	const gltex_t *tex[GX2GL_UNITS];
+	float vsu[24];
+	float psu[40];
+} sent;
+
+#define CHANGED( field, value ) ( !sent.valid || memcmp( &sent.field, &( value ), sizeof( sent.field )) != 0 )
+#define REMEMBER( field, value ) memcpy( &sent.field, &( value ), sizeof( sent.field ))
+
 static void GX2GL_ApplyState( void )
 {
 	float mvp[16], vsu[24], psu[40];
+	int vp[4], sc[4], depth[3], blend[3], alpha[2], polygon[4];
+	float range[2], offset[2];
 	int unit;
 
 	if( g.stateLost )
@@ -647,10 +683,22 @@ static void GX2GL_ApplyState( void )
 		GX2SetVertexShader( g.shader.vertexShader );
 		GX2SetPixelShader( g.shader.pixelShader );
 		g.stateLost = 0;
+		sent.valid = 0;
 	}
 
 	// viewport and scissor (GL's origin is bottom-left)
-	GX2SetViewport( g.viewport[0], g.height - ( g.viewport[1] + g.viewport[3] ), g.viewport[2], g.viewport[3], g.depthNear, g.depthFar );
+	vp[0] = g.viewport[0];
+	vp[1] = g.height - ( g.viewport[1] + g.viewport[3] );
+	vp[2] = g.viewport[2];
+	vp[3] = g.viewport[3];
+	range[0] = g.depthNear;
+	range[1] = g.depthFar;
+	if( CHANGED( viewport, vp ) || CHANGED( depthRange, range ))
+	{
+		GX2SetViewport( vp[0], vp[1], vp[2], vp[3], range[0], range[1] );
+		REMEMBER( viewport, vp );
+		REMEMBER( depthRange, range );
+	}
 
 	if( g.scissorTest )
 	{
@@ -660,45 +708,105 @@ static void GX2GL_ApplyState( void )
 		if( y < 0 ) { h += y; y = 0; }
 		if( x + w > g.width ) w = g.width - x;
 		if( y + h > g.height ) h = g.height - y;
-		GX2SetScissor( x, y, w > 0 ? w : 0, h > 0 ? h : 0 );
+		sc[0] = x; sc[1] = y; sc[2] = w > 0 ? w : 0; sc[3] = h > 0 ? h : 0;
 	}
 	else
 	{
-		GX2SetScissor( 0, 0, g.width, g.height );
+		sc[0] = 0; sc[1] = 0; sc[2] = g.width; sc[3] = g.height;
+	}
+	if( CHANGED( scissor, sc ))
+	{
+		GX2SetScissor( sc[0], sc[1], sc[2], sc[3] );
+		REMEMBER( scissor, sc );
 	}
 
-	GX2SetDepthOnlyControl( g.depthTest, g.depthTest && g.depthMask, GX2GL_CompareFunc( g.depthFunc ));
-	GX2SetColorControl( GX2_LOGIC_OP_COPY, g.blend ? 1 : 0, FALSE, TRUE );
-	GX2SetBlendControl( GX2_RENDER_TARGET_0, GX2GL_BlendMode( g.blendSrc ), GX2GL_BlendMode( g.blendDst ),
-		GX2_BLEND_COMBINE_MODE_ADD, FALSE, GX2_BLEND_MODE_ONE, GX2_BLEND_MODE_ZERO, GX2_BLEND_COMBINE_MODE_ADD );
-	GX2SetAlphaTest( g.alphaTest, GX2GL_CompareFunc( g.alphaFunc ), g.alphaRef );
-	GX2SetTargetChannelMasks( (GX2ChannelMask)g.colorMask, 0, 0, 0, 0, 0, 0, 0 );
+	depth[0] = g.depthTest;
+	depth[1] = g.depthTest && g.depthMask;
+	depth[2] = GX2GL_CompareFunc( g.depthFunc );
+	if( CHANGED( depth, depth ))
+	{
+		GX2SetDepthOnlyControl( depth[0], depth[1], depth[2] );
+		REMEMBER( depth, depth );
+	}
 
-	GX2SetPolygonControl( g.frontFace == GL_CW ? GX2_FRONT_FACE_CW : GX2_FRONT_FACE_CCW,
-		g.cullFace && ( g.cullMode == GL_FRONT || g.cullMode == GL_FRONT_AND_BACK ),
-		g.cullFace && ( g.cullMode == GL_BACK || g.cullMode == GL_FRONT_AND_BACK ),
-		FALSE, GX2_POLYGON_MODE_TRIANGLE, GX2_POLYGON_MODE_TRIANGLE,
-		g.polygonOffset, g.polygonOffset, FALSE );
-	if( g.polygonOffset )
-		GX2SetPolygonOffset( g.offsetUnits, g.offsetFactor * 16.0f, g.offsetUnits, g.offsetFactor * 16.0f, 0.0f );
+	blend[0] = g.blend ? 1 : 0;
+	blend[1] = GX2GL_BlendMode( g.blendSrc );
+	blend[2] = GX2GL_BlendMode( g.blendDst );
+	if( CHANGED( blend, blend ))
+	{
+		GX2SetColorControl( GX2_LOGIC_OP_COPY, blend[0], FALSE, TRUE );
+		GX2SetBlendControl( GX2_RENDER_TARGET_0, blend[1], blend[2], GX2_BLEND_COMBINE_MODE_ADD,
+			FALSE, GX2_BLEND_MODE_ONE, GX2_BLEND_MODE_ZERO, GX2_BLEND_COMBINE_MODE_ADD );
+		REMEMBER( blend, blend );
+	}
 
-	if( g.batchType == BATCH_POINTS )
+	alpha[0] = g.alphaTest;
+	alpha[1] = GX2GL_CompareFunc( g.alphaFunc );
+	if( CHANGED( alpha, alpha ) || CHANGED( alphaRef, g.alphaRef ))
+	{
+		GX2SetAlphaTest( alpha[0], alpha[1], g.alphaRef );
+		REMEMBER( alpha, alpha );
+		REMEMBER( alphaRef, g.alphaRef );
+	}
+
+	if( CHANGED( colorMask, g.colorMask ))
+	{
+		GX2SetTargetChannelMasks( (GX2ChannelMask)g.colorMask, 0, 0, 0, 0, 0, 0, 0 );
+		REMEMBER( colorMask, g.colorMask );
+	}
+
+	polygon[0] = g.frontFace == GL_CW ? GX2_FRONT_FACE_CW : GX2_FRONT_FACE_CCW;
+	polygon[1] = g.cullFace && ( g.cullMode == GL_FRONT || g.cullMode == GL_FRONT_AND_BACK );
+	polygon[2] = g.cullFace && ( g.cullMode == GL_BACK || g.cullMode == GL_FRONT_AND_BACK );
+	polygon[3] = g.polygonOffset;
+	if( CHANGED( polygon, polygon ))
+	{
+		GX2SetPolygonControl( polygon[0], polygon[1], polygon[2], FALSE, GX2_POLYGON_MODE_TRIANGLE,
+			GX2_POLYGON_MODE_TRIANGLE, polygon[3], polygon[3], FALSE );
+		REMEMBER( polygon, polygon );
+	}
+
+	offset[0] = g.offsetUnits;
+	offset[1] = g.offsetFactor * 16.0f;
+	if( g.polygonOffset && CHANGED( offset, offset ))
+	{
+		GX2SetPolygonOffset( offset[0], offset[1], offset[0], offset[1], 0.0f );
+		REMEMBER( offset, offset );
+	}
+
+	if( g.batchType == BATCH_POINTS && CHANGED( pointSize, g.pointSize ))
+	{
 		GX2SetPointSize( g.pointSize, g.pointSize );
-	else if( g.batchType == BATCH_LINES )
+		REMEMBER( pointSize, g.pointSize );
+	}
+	else if( g.batchType == BATCH_LINES && CHANGED( lineWidth, g.lineWidth ))
+	{
 		GX2SetLineWidth( g.lineWidth );
+		REMEMBER( lineWidth, g.lineWidth );
+	}
 
-	// textures
+	// textures: a texture's registers only change with an upload, which sets g.stateLost
 	for( unit = 0; unit < GX2GL_UNITS; unit++ )
 	{
 		gltex_t *t = g.tex2d[unit] ? GX2GL_GetTexture( g.bound[unit], 0 ) : NULL;
+		int dirty = 0;
 
 		if( !t || !t->allocated )
+		{
 			t = &g.white;
+		}
 		else if( t->samplerDirty )
+		{
 			GX2GL_UpdateSampler( t );
+			dirty = 1;
+		}
 
-		GX2SetPixelTexture( &t->tex, unit );
-		GX2SetPixelSampler( &t->sampler, unit );
+		if( dirty || !sent.valid || sent.tex[unit] != t )
+		{
+			GX2SetPixelTexture( &t->tex, unit );
+			GX2SetPixelSampler( &t->sampler, unit );
+			sent.tex[unit] = t;
+		}
 	}
 
 	// vertex shader uniforms: MVP, modelview row 2 (eye z), fog coefficient
@@ -710,7 +818,11 @@ static void GX2GL_ApplyState( void )
 	vsu[19] = g.mv[g.mvDepth][14];
 	vsu[20] = g.fog ? g.fogDensity * 1.4426950f : 0.0f; // 2^( density * log2(e) * z ), z < 0 in front
 	vsu[21] = vsu[22] = vsu[23] = 0.0f;
-	GX2SetVertexUniformReg( 0, 24, vsu );
+	if( CHANGED( vsu, vsu ))
+	{
+		GX2SetVertexUniformReg( 0, 24, vsu );
+		REMEMBER( vsu, vsu );
+	}
 
 	// pixel shader uniforms: environment weights, alpha reference (unused, GX2 does the alpha test), fog colour
 	GX2GL_EnvWeights( 0, g.tex2d[0], &psu[0] );
@@ -721,8 +833,17 @@ static void GX2GL_ApplyState( void )
 	psu[37] = g.fogColor[1];
 	psu[38] = g.fogColor[2];
 	psu[39] = 1.0f;
-	GX2SetPixelUniformReg( 0, 40, psu );
+	if( CHANGED( psu, psu ))
+	{
+		GX2SetPixelUniformReg( 0, 40, psu );
+		REMEMBER( psu, psu );
+	}
+
+	sent.valid = 1;
 }
+
+#undef CHANGED
+#undef REMEMBER
 
 /*
 =============
@@ -851,6 +972,7 @@ static int GX2GL_AllocTexture( gltex_t *t, int w, int h )
 	t->tex.viewNumSlices = 1;
 	t->tex.compMap = GX2_COMP_MAP( GX2_SQ_SEL_R, GX2_SQ_SEL_G, GX2_SQ_SEL_B, GX2_SQ_SEL_A );
 	GX2InitTextureRegs( &t->tex );
+	sent.valid = 0; // ApplyState compares texture pointers, and this one has new registers
 
 	t->allocated = 1;
 	t->width = w;
@@ -1098,6 +1220,7 @@ static const GLubyte *glGetString_( GLenum name )
 	case GL_VERSION: return (const GLubyte *)"1.3 gx2gl";
 	case GL_EXTENSIONS: return (const GLubyte *)"GL_ARB_multitexture GL_ARB_texture_env_combine GL_ARB_texture_env_add "
 		"GL_EXT_texture_edge_clamp GL_ARB_texture_non_power_of_two";
+	case GX2GL_STATS: return (const GLubyte *)g.stats.text;
 	default: return (const GLubyte *)"";
 	}
 }
@@ -1157,8 +1280,11 @@ static void glViewport_( GLint x, GLint y, GLsizei w, GLsizei h )
 
 static void glScissor_( GLint x, GLint y, GLsizei w, GLsizei h )
 {
-	STATE_CHANGE();
-	g.scissor[0] = x; g.scissor[1] = y; g.scissor[2] = w; g.scissor[3] = h;
+	if( g.scissor[0] != x || g.scissor[1] != y || g.scissor[2] != w || g.scissor[3] != h )
+	{
+		STATE_CHANGE();
+		g.scissor[0] = x; g.scissor[1] = y; g.scissor[2] = w; g.scissor[3] = h;
+	}
 }
 
 static void glPolygonOffset_( GLfloat factor, GLfloat units )
@@ -1561,18 +1687,23 @@ static void glTranslated_( GLdouble x, GLdouble y, GLdouble z ) { glTranslatef_(
 // texture environment
 static void GX2GL_TexEnv( GLenum pname, float param )
 {
-	texenv_t *env = &g.env[g.activeUnit];
+	texenv_t env = g.env[g.activeUnit];
 	GLenum e = (GLenum)param;
-
-	STATE_CHANGE();
 
 	switch( pname )
 	{
-	case GL_TEXTURE_ENV_MODE: env->mode = e; break;
-	case GL_COMBINE_RGB: env->combineRGB = e; break;
-	case GL_COMBINE_ALPHA: env->combineAlpha = e; break;
-	case GL_SOURCE0_ALPHA: env->source0Alpha = e; break;
-	case GL_RGB_SCALE: env->rgbScale = param; break;
+	case GL_TEXTURE_ENV_MODE: env.mode = e; break;
+	case GL_COMBINE_RGB: env.combineRGB = e; break;
+	case GL_COMBINE_ALPHA: env.combineAlpha = e; break;
+	case GL_SOURCE0_ALPHA: env.source0Alpha = e; break;
+	case GL_RGB_SCALE: env.rgbScale = param; break;
+	default: return;
+	}
+
+	if( memcmp( &env, &g.env[g.activeUnit], sizeof( env )) != 0 )
+	{
+		STATE_CHANGE();
+		g.env[g.activeUnit] = env;
 	}
 }
 
@@ -1691,6 +1822,7 @@ static void glTexImage2D_( GLenum target, GLint level, GLint internalformat, GLs
 	{
 		t->tex.viewNumMips = level + 1;
 		GX2InitTextureRegs( &t->tex );
+		sent.valid = 0; // same texture, new registers
 	}
 }
 
@@ -2064,7 +2196,53 @@ void GX2GL_SetSwapInterval( int interval )
 	GX2SetSwapInterval( interval );
 }
 
-void GX2GL_SwapBuffers( void )
+// averages for r_speeds 6, every half second. "cpu" is the frame time without the two waits: when it's
+// above 16.7 ms the CPU limits the frame rate, when "gpu" is large the GPU does
+static void GX2GL_UpdateStats( void )
+{
+	OSTime now = OSGetSystemTime();
+	float frames, total;
+
+	g.stats.frames++;
+	if( !g.stats.periodStart )
+		g.stats.periodStart = now;
+
+	if( now - g.stats.periodStart < (OSTime)OSMillisecondsToTicks( 500 ))
+		return;
+
+	frames = (float)g.stats.frames;
+	total = (float)OSTicksToMicroseconds( now - g.stats.periodStart ) / 1000.0f / frames;
+	snprintf( g.stats.text, sizeof( g.stats.text ),
+		"frame %.1f ms\ncpu %.1f, gpu wait %.1f\nvsync wait %.1f\n%u draws, %u verts",
+		total,
+		total - (float)OSTicksToMicroseconds( g.stats.waitGPU + g.stats.waitFlip ) / 1000.0f / frames,
+		(float)OSTicksToMicroseconds( g.stats.waitGPU ) / 1000.0f / frames,
+		(float)OSTicksToMicroseconds( g.stats.waitFlip ) / 1000.0f / frames,
+		(unsigned)( g.stats.draws / g.stats.frames ), (unsigned)( g.stats.verts / g.stats.frames ));
+
+	g.stats.frames = g.stats.draws = g.stats.verts = 0;
+	g.stats.waitGPU = g.stats.waitFlip = 0;
+	g.stats.periodStart = now;
+}
+
+// SDL's on-screen keyboard (libSDL2, SDL_wiiuswkbd.cpp): DrawTV/DrawDRC for the window it belongs to
+void WIIU_SWKBD_Draw( void *window );
+
+// draw SDL's on-screen keyboard over the frame, the way SDL's GX2 renderer does it when presenting
+static void GX2GL_DrawKeyboard( void *window )
+{
+	// The keyboard draws with its own GPU state. SDL also switches the colour buffer to sRGB around it
+	// for exact colours; doing that here crashed Cemu, so the keyboard's gamma may be a little off
+	GX2SetContextState( NULL );
+	GX2SetColorBuffer( &g.cb, GX2_RENDER_TARGET_0 );
+
+	WIIU_SWKBD_Draw( window );
+
+	GX2SetContextState( g.ctx );
+	g.stateLost = 1;
+}
+
+void GX2GL_SwapBuffers( void *keyboardWindow )
 {
 	if( !g.initialized )
 		return;
@@ -2073,6 +2251,9 @@ void GX2GL_SwapBuffers( void )
 
 	if( GX2GL_Active( ) )
 	{
+		if( keyboardWindow )
+			GX2GL_DrawKeyboard( keyboardWindow );
+
 		GX2CopyColorBufferToScanBuffer( &g.cb, GX2_SCAN_TARGET_TV );
 		GX2CopyColorBufferToScanBuffer( &g.cb, GX2_SCAN_TARGET_DRC );
 		GX2SwapScanBuffers();
@@ -2087,7 +2268,23 @@ void GX2GL_SwapBuffers( void )
 		}
 
 		if( g.swapInterval )
-			GX2WaitForFlip();
+		{
+			// Only wait while more than one flip is pending. Waiting for every flip made a frame that
+			// missed a vblank by a little hold up the next one too: 60 FPS dropped straight to 30.
+			// Now a slow frame is shown one vblank later and the CPU keeps going (frames in flight are
+			// still limited by the vertex ring's fences below).
+			uint32_t swaps, flips;
+			OSTime lastFlip, lastVsync, t = OSGetSystemTime();
+
+			for( ;; )
+			{
+				GX2GetSwapStatus( &swaps, &flips, &lastFlip, &lastVsync );
+				if( swaps - flips <= 1 )
+					break;
+				GX2WaitForFlip();
+			}
+			g.stats.waitFlip += OSGetSystemTime() - t;
+		}
 	}
 
 	g.stateLost = 1;
@@ -2095,8 +2292,14 @@ void GX2GL_SwapBuffers( void )
 	// next frame: reuse the other half once the GPU is done with it
 	g.slot ^= 1;
 	if( GX2GL_Active( ) && g.fence[g.slot] )
+	{
+		OSTime t = OSGetSystemTime();
 		GX2WaitTimeStamp( g.fence[g.slot] );
+		g.stats.waitGPU += OSGetSystemTime() - t;
+	}
 	GX2GL_FreeDeferred( g.slot );
 	g.ringUsed = 0;
+
+	GX2GL_UpdateStats();
 
 }

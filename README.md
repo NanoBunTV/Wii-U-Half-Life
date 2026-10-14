@@ -15,7 +15,7 @@ Requires the Aroma environment.
 
 1. Copy `halflife.wuhb` to `sd:/wiiu/apps/`.
 2. Copy the `valve` folder from your Steam install (`Steam\steamapps\common\Half-Life\valve`, about 600 MB)
-   to `sd:/halflife/valve`.
+   to `sd:/wiiu/apps/halflife/valve`.
 3. Start Half-Life from the Wii U menu.
 
 ## Controls (Wii U GamePad)
@@ -41,8 +41,12 @@ hold −, move the GamePad back to a comfortable position and let go. Gyro aimin
 Configuration → Gamepad → Gyroscope. Buttons can be rebound in Configuration → Controls; stick speed is in
 Configuration → Gamepad.
 
-To report a problem, put `-log` in `sd:/halflife/cmdline.txt`; the game then writes its log to
-`sd:/halflife/engine.log`.
+Sound is boosted by default (`snd_gain 1.5`) because the GamePad's speakers are quiet. If loud sounds
+distort, lower it, for example with `+snd_gain 1.2` in `sd:/wiiu/apps/halflife/cmdline.txt`; the value is
+saved.
+
+To report a problem, put `-log` in `sd:/wiiu/apps/halflife/cmdline.txt`; the game then writes its log to
+`sd:/wiiu/apps/halflife/engine.log`.
 
 ## Building
 

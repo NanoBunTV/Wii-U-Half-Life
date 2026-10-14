@@ -38,9 +38,9 @@ reimplementations.
 | Own CMake build instead of upstream's waf | wut ships CMake support (`wut_create_rpx` / `wut_create_wuhb`), and the game code has to be linked into the engine anyway. Waf has no Wii U target and no way to pull hlsdk-portable into the engine link |
 | Hide each library's symbols (`ld -r` + `objcopy -G` + strip COMDAT groups) | Client and server share the weapon and player-movement code; every renderer defines `GetRefAPI`. The [Wii port](https://github.com/MintFerret/xash3d-fwgs) renamed clashing symbols by hand, which is fragile across engine updates |
 | Engine source not vendored: `external/` + `patches/` | Keeps the repository small and makes it obvious which lines are the port's. `scripts/fetch-deps.ps1` pins exact upstream commits |
-| Game files at `sd:/halflife/valve` | Outside `sd:/wiiu/apps`, so the Aroma launcher doesn't have to scan thousands of game files |
+| Game files at `sd:/wiiu/apps/halflife/valve` | Next to `halflife.wuhb`, owner's decision (2026-10-14). Was `sd:/halflife/valve` before, to keep game files out of the folder the Aroma launcher scans for apps; it only looks for `.wuhb`/`.rpx` files, so a data folder there is fine |
 | Engine extras (`extras.pk3`) inside the `.wuhb` | Users copy only the Steam `valve` folder. The `.wuhb` content folder is mounted as the engine's read-only root |
-| Software renderer (`ref_soft`) first, GX2 renderer later | `ref_soft` needs no GPU work, so the rest of the port can be tested now. A `ref_gx2` renderer is needed for good performance on hardware |
+| Software renderer (`ref_soft`) first, GX2 renderer later | `ref_soft` needs no GPU work, so the rest of the port could be tested first. Done 2026-10-14: `ref_gl` on gx2gl is the default renderer, `ref_soft` the fallback (`-ref soft`) |
 | IPv6 disabled | The Wii U network stack (nsysnet) is IPv4 only |
 | Logs go to OSReport and UDP | OSReport shows in Cemu's log; UDP port 4405 works on real hardware with devkitPro's `udplogserver` |
 

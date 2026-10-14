@@ -7,7 +7,7 @@ The owner uses Cemu 2.6 (the latest release as of 2026-10; checked on GitHub) at
 
 ```
 .\scripts\run-cemu.ps1                       # run build\halflife.wuhb, print engine log lines live
-.\scripts\run-cemu.ps1 -EngineArgs '-dev 2'  # set sd:/halflife/cmdline.txt first
+.\scripts\run-cemu.ps1 -EngineArgs '-dev 2'  # set sd:/wiiu/apps/halflife/cmdline.txt first
 .\scripts\run-cemu.ps1 -Interpreter          # Cemu's exact (slow) single-core interpreter
 ```
 
@@ -92,6 +92,24 @@ the recompiler at about 36 FPS.
 **To do:** test the `-O2` build on real hardware. If it works there, report to Cemu and consider making the
 workaround Cemu-test-builds only.
 
+### History: invisible decals with Cemu's recompiler (2026-10-14)
+
+**Symptom:** bullet holes and other decals were invisible with `ref_gl` and mostly missing (a quarter of the
+hole) with `ref_soft`, but only with the recompiler. With `--force-interpreter` the same binary draws them
+correctly.
+
+**What logging showed (`ref/gl/gl_decals.c`):** the clipped decal vertices in `g_DecalClipVerts` were
+correct, but right after `R_DecalCreatePoly` copied them into a new `Mem_Calloc` block, the block read back
+as all zeros. Every decal then drew as a 0-size quad at the world origin. gx2gl itself was fine: with the
+interpreter the bullet holes blend correctly.
+
+**Takeaway:** a second case of Cemu's recompiler mis-executing this engine, again around zone memory
+(`Mem_Calloc` → `_Mem_Alloc`). Check decals with `--force-interpreter` or on hardware, not with the
+recompiler. Scripted test: `scripts/gxtest.cfg` (copy it to `valve/` on the SD card) defines `gxfire`
+(impulse 101, MP5, hold fire), e.g. `+sv_cheats 1 +exec gxtest.cfg +map c2a3 +w100 +w100 +gxfire`; the
+decal wall is straight ahead at the c2a3 start. The interpreter needs about 3 minutes to get there. The
+same line works on hardware, and `+map c4a1` shakes the ground right away (rumble).
+
 ### SDL Wii U renderer quirks (found 2026-10-13)
 
 The software renderer's frame goes through SDL's GX2 renderer (`vid_sdl2.c`, `SW_*` functions, Wii U
@@ -126,7 +144,7 @@ Window captures (`capture-cemu.ps1`) of the Vulkan window are reliable; the froz
     F:\Programs\devkitPro\devkitPPC\bin\powerpc-eabi-addr2line.exe -f -C -e build\halflife.elf 020b8930 020b8a10 020c1234
     ```
     `.text` starts at `0x02000000` in both the ELF and the loaded RPX, so the addresses match directly.
-- **Hangs:** put `-watchdog 10` in `sd:/halflife/cmdline.txt`. Every 10 s the watchdog suspends the engine
+- **Hangs:** put `-watchdog 10` in `sd:/wiiu/apps/halflife/cmdline.txt`. Every 10 s the watchdog suspends the engine
   thread and logs its PC, LR and stack, which you decode the same way. Under Cemu the values are garbage
   (Cemu doesn't keep the saved thread context up to date), so this only helps on hardware.
 
@@ -136,6 +154,7 @@ Window captures (`capture-cemu.ps1`) of the Vulkan window are reliable; the froz
 |---|---|
 | `-dev 2` | Verbose developer messages (file loading, DLL setup...) |
 | `-console` | Enables the console (it's already allowed by default on Wii U) |
-| `-log` | Also write `sd:/halflife/engine.log` (on Wii U the default path is absolute, `sys_con.c`: the working directory isn't set yet when the log opens). The easiest way to get a log from real hardware |
+| `-log` | Also write `sd:/wiiu/apps/halflife/engine.log` (on Wii U the default path is absolute, `sys_con.c`: the working directory isn't set yet when the log opens). The easiest way to get a log from real hardware |
+| `+r_speeds 6` | Wii U performance page (top right): frame time, CPU time, GPU and vsync waits, draw calls, vertices, world CPU time. CPU above 16.7 ms means the CPU limits the frame rate; a large GPU wait means the GPU does |
 | `+map c1a0` | Start a map directly, skipping the menu |
 | `-watchdog <s>` | Hang watchdog (see above) |

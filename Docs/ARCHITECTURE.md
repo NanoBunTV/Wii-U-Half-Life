@@ -85,11 +85,12 @@ threads, time and BSD sockets.
 
 - **`WiiU_GetArgv`** (called from `main` in `launcher.c`):
   - Sets up logging.
-  - Adds the arguments from `sd:/halflife/cmdline.txt`.
+  - Adds the arguments from `sd:/wiiu/apps/halflife/cmdline.txt`.
   - Sets `XASH3D_RODIR=fs:/vol/content`, the `.wuhb`'s own files.
 - **Logging:** wut doesn't connect stdout/stderr to anything. A devoptab sends them, line-buffered, to
   `WHBLogPrint`, which writes to OSReport (Cemu log) and UDP port 4405 (`udplogserver` on a PC).
-- **`WiiU_GetBasePath`:** returns `fs:/vol/external01/halflife`, i.e. `sd:/halflife`.
+- **`WiiU_GetBasePath`:** returns `fs:/vol/external01/wiiu/apps/halflife`, i.e. `sd:/wiiu/apps/halflife`
+  (next to the .wuhb; it was `sd:/halflife` until 2026-10-14).
 - **`WiiU_Init`** (from `Platform_Init`):
   - Installs the crash handler (DSI/ISI/program/alignment). It logs PC, LR, the data address, registers and
     stack return addresses, then calls `OSFatal`.
@@ -122,9 +123,17 @@ Engine changes for the port are guarded by `#if XASH_WIIU`. They include:
   from SDL's own reads; `SDLash_WiiUGyroFrame` feeds the average to the engine's normal gyro calibration
   and aiming every frame. Calibration runs on the raw GamePad axes; `SDLash_WiiUGyroToView` then converts
   them to pitch (−x) and yaw around gravity (from the accelerometer, so any holding angle works);
-- `-log` writes `sd:/halflife/engine.log` (`sys_con.c`, absolute default path on Wii U);
+- `-log` writes `sd:/wiiu/apps/halflife/engine.log` (`sys_con.c`, absolute default path on Wii U);
 - `+gyro_recenter` (−): levels the view and pauses gyro aiming while held (`in_joy.c`);
 - HOME → Close (`SDL_QUIT`) quits immediately instead of opening the menu's quit dialog (`host_sdl2.c`);
+- GamePad rumble through `VPADControlMotor` (`Platform_Vibrate2` in `joy_sdl2.c`): SDL's Wii U driver has
+  none, and each failed `SDL_GameControllerRumble` logged an SDL error (every frame during `env_shake`).
+  The motor is on/off, so strength becomes the share of "on" bits, one bit per 1/120 s, up to 120 bits.
+  That's how Cemu reads the pattern; wut's header says the length is in bytes. Not yet felt on hardware;
+- `ref_gl` is the default renderer and the saved `r_refdll` is ignored (`ref_common.c`);
+- `snd_gain` (default 1.5, saved): final audio output gain before clipping (`s_mix.c`), because the
+  GamePad's speakers were quiet at the PC level. SDL's Wii U audio already mixes at unity (`0x8000`);
+- big-endian fixes in `img_wad.c` (palette entry 255's alpha, `Image_FindBestBlack`);
 - menu entries that make no sense on a console hidden in mainui (`mainui.patch`).
 
 The full list is in `patches/xash3d-fwgs.patch`.
@@ -132,12 +141,13 @@ The full list is in `patches/xash3d-fwgs.patch`.
 ## Data on the SD card
 
 ```
-sd:/wiiu/apps/halflife.wuhb     the app (contains valve/extras.pk3 in its content folder)
-sd:/halflife/valve/             the user's own game files from Steam
-sd:/halflife/cmdline.txt        optional extra engine arguments, e.g. "-dev 2 -console"
+sd:/wiiu/apps/halflife.wuhb          the app (contains valve/extras.pk3 in its content folder)
+sd:/wiiu/apps/halflife/valve/        the user's own game files from Steam
+sd:/wiiu/apps/halflife/cmdline.txt   optional extra engine arguments, e.g. "-dev 2 -console"
+sd:/wiiu/apps/halflife/engine.log    written with -log
 ```
 
-The engine writes `config.cfg`, saves (`valve/SAVE/`) and logs inside `sd:/halflife/valve/`.
+The engine writes `config.cfg`, saves (`valve/SAVE/`) and logs inside `sd:/wiiu/apps/halflife/valve/`.
 
 ## Hardware rendering: ref_gl on gx2gl
 
@@ -149,8 +159,10 @@ engine's `GL_GetProcAddress`, which on Wii U is `GX2GL_GetProcAddress`.
 - **Engine side (`vid_sdl2.c`, `XASH_WIIU`):** no `SDL_WINDOW_OPENGL` and no SDL GL library. The "context"
   is `GX2GL_CreateContext(render size)`, swap is `GX2GL_SwapBuffers`, vsync is `GX2GL_SetSwapInterval`. GL
   attributes are fixed (RGBA8, 24-bit depth, no stencil). The render size is `vid_wiiu_render_height` (as for
-  `ref_soft`, `VID_WiiURenderSize`). The engine tries `gl` first and falls back to `soft`; `-ref soft` /
-  `-ref gl` choose, and the last renderer that worked is saved as `r_refdll` in `video.cfg`.
+  `ref_soft`, `VID_WiiURenderSize`). `gl` is the default and `soft` the fallback. On Wii U the saved
+  `r_refdll` (`video.cfg`) is ignored (`ref_common.c`, `R_Init`): the menu's renderer choice is hidden, and
+  installs from before ref_gl had `soft` saved. Only `-ref soft` in `cmdline.txt` picks the software
+  renderer, which is kept for comparison and debugging.
 - **What gx2gl reports:** GL 1.3, 2 texture units, `GL_ARB_multitexture`, `GL_ARB_texture_env_combine`,
   `GL_ARB_texture_env_add`, `GL_EXT_texture_edge_clamp`, `GL_ARB_texture_non_power_of_two`. No VBOs, so
   `ref_gl` uses its classic immediate-mode path. Every OpenGL 1.1 function `ref_gl` looks up exists, some as
@@ -158,13 +170,28 @@ engine's `GL_GetProcAddress`, which on Wii U is `GX2GL_GetProcAddress`.
 - **Drawing:** immediate mode and client arrays are converted on the CPU into one vertex format (position,
   colour, two texcoords, 48 bytes) and triangle/line/point lists in a vertex ring buffer (2 × 6 MB, one half
   per frame in flight, guarded by GPU timestamps). Consecutive primitives with the same state are one draw
-  call; every state change flushes. The texture matrix is applied on the CPU.
+  call; a GL call that really changes state flushes (setting the same value again doesn't). The texture
+  matrix is applied on the CPU. Before each draw, `GX2GL_ApplyState` only sends the state groups and
+  uniform blocks that differ from what it sent last (`sent`); the cache is cleared whenever the GX2 context
+  is set again (after clears, copies, uploads and swaps) or a texture's registers change.
 - **Shaders:** one fixed-function pair (`src/gx2gl/shaders/fixed.vsh/.psh`, GPU assembly, see BUILDING.md).
   Texture environments (modulate, replace, decal, add, combine-modulate with `RGB_SCALE`) for both units are
   one formula with per-unit weights in uniforms. Exponential fog is in the shaders; the alpha test is GX2's.
 - **Textures:** tiled RGBA8 GX2 textures with a full mip chain allocated up front. Uploads (also
   `glTexSubImage2D`, e.g. lightmaps) are converted to RGBA8, written to a linear staging surface and copied
   by the GPU (`GX2CopySurface(Ex)`). Memory the GPU may still use is freed one frame later.
+- **Vsync (`gl_vsync 1`, the default):** after a swap, gx2gl only waits while more than one flip is
+  pending. Waiting for every flip made a frame that missed a vblank hold up the next one too, so the frame
+  rate jumped between 60 and 30.
+- **On-screen keyboard:** SDL draws its keyboard (nn::swkbd) when it presents a frame, which gx2gl does
+  itself. So while `SDL_IsScreenKeyboardShown`, `GX2GL_SwapBuffers` gets the window and calls SDL's
+  `WIIU_SWKBD_Draw` (a public symbol in `libSDL2.a`) with no context state bound, before copying to the
+  screens. SDL also switches the colour buffer to sRGB around the draw; that crashed Cemu, so it's left out
+  (the keyboard's gamma may be slightly off on hardware).
+- **Performance counters:** `r_speeds 6` (a Wii U case in `ref_gl`'s `gl_backend.c`) shows gx2gl's frame
+  time, CPU time (frame time minus the waits), the time spent waiting for the GPU and for vsync, draw calls
+  and vertices per frame (averaged over half a second, `glGetString( GX2GL_STATS )`), plus the world's CPU
+  time and polygon counts.
 - **Output:** our own colour (RGBA8) and depth (float 32) buffers in MEM2, copied (scaled) to the TV and
   GamePad scan buffers that SDL's video driver owns. Nothing is sent to the GPU in the background, checked
   live with `ProcUIInForeground` before every GPU call or wait. A per-frame flag wasn't enough: after

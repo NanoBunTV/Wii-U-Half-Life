@@ -24,7 +24,14 @@
 | 2026-10-14 | same | **Real Wii U** (owner) | **Gyro works great**, no drift; only left/right inverted (yaw sign flipped in the next build, not re-tested) |
 | 2026-10-14 | **ref_gl on gx2gl** (hardware rendering), `-ref gl` | Cemu 2.6, recompiler | **Menu correct at 60 FPS** (background, fonts, blending, animated logo). **Hazard Course renders**: textures, alpha-tested grates, depth, lightmaps (after the `GL_EQUAL` → `LEQUAL` fix). Looks brighter than `ref_soft` (GL overbright lighting) |
 | 2026-10-14 | same | **Real Wii U** (owner) | **Hazard Course at 30–60 FPS, "perfectly playable"**, nothing looks broken. HOME → Close hung at the system loading screen again: the log stops at `Shutting down audio.`, so the renderer's shutdown waited on the GPU in the background |
-| 2026-10-14 | gx2gl checks the foreground live before every GPU call | not tested yet | |
+| 2026-10-14 | gx2gl checks the foreground live before every GPU call | **Real Wii U** (owner) | **HOME → Close works** |
+| 2026-10-14 | gl is the default renderer (saved `r_refdll` ignored on Wii U) | Cemu 2.6, recompiler | Starts with `ref_gl` without `-ref`. c1a1, c2a5, c4a1 (Xen sky, glow sprites), c2a3: weapon view models, HUD, studio models and sky correct at 60 FPS. Decals invisible: Cemu recompiler bug (DEBUGGING.md) |
+| 2026-10-14 | + big-endian fix in `img_wad.c` (palette index 255 alpha) | Cemu 2.6, `--force-interpreter` | Bullet decals blend correctly, spark particles render |
+| 2026-10-14 | data folder moved to `sd:/wiiu/apps/halflife`; gx2gl sends only changed state; GamePad rumble via `VPADControlMotor` | Cemu 2.6, recompiler | Starts from the new folder, `-log` writes there. Menu, c2a5, c4a1 look the same as before. No more `SDL: [Error] That operation is not supported` (was 540 lines in a few seconds of c4a1's `env_shake`) |
+| 2026-10-14 | same | **Real Wii U** (owner) | FPS "roughly exactly the same" as before the state caching. Decals and rumble not reachable without a late save (now: `scripts/gxtest.cfg`). Audio a little quiet on the GamePad speakers |
+| 2026-10-14 | vsync waits only with 2 flips pending, `r_speeds 6` counters, `snd_gain` 1.5 | Cemu 2.6, recompiler | c2a5: 4.7 ms CPU per frame, 215 draws, 11,400 vertices (Cemu's CPU is much faster than the console's) |
+| 2026-10-14 | same | **Real Wii U** (owner) | c1a0 tram: **61 FPS**, frame 17.0 ms = 8.1 ms CPU + 8.9 ms vsync wait, GPU wait 0, 59 draws, 6,072 vertices. The console's on-screen keyboard is invisible with `ref_gl` (key clicks are heard) |
+| 2026-10-14 | gx2gl draws SDL's on-screen keyboard (`WIIU_SWKBD_Draw`) | Cemu 2.6, recompiler | `+toggleconsole`: keyboard shown, no crash. With SDL's sRGB switch around the draw Cemu crashed, so that's left out |
 
 ## Test checklist for new builds
 
@@ -66,7 +73,7 @@
      works at any holding angle (`SDLash_WiiUGyroToView`). Cemu's SDL→VPAD conversion got pitch right
      but suggested the wrong yaw sign.
 
-  Diagnosis: run with `-log` (cmdline.txt); `sd:/halflife/engine.log` shows
+  Diagnosis: run with `-log` (cmdline.txt); `sd:/wiiu/apps/halflife/engine.log` shows
   `GamePad gyro: receiving samples (gyro …, acc …)` and `Calibration done. Result: …`. Players can invert
   or scale it in Configuration → Gamepad → Gyroscope.
 - **Changed default bindings don't reach existing installs:** the engine saves all bindings to
@@ -79,13 +86,15 @@
   DEBUGGING.md). Unknown whether real hardware is affected.
 - **Performance:** the software renderer is very slow on the real 1.24 GHz CPU (owner's first hardware
   test). Cemu runs much faster than the hardware, so don't judge speed there. The hardware renderer
-  (`ref_gl` on gx2gl, ARCHITECTURE.md) is the fix: 30–60 FPS in the Hazard Course on hardware. Until it's the default,
-  start it with `-ref gl` in `cmdline.txt` (the saved `r_refdll` in `video.cfg` otherwise keeps the
-  previous renderer). gx2gl still re-sends all GPU state per draw call and converts every vertex on the
-  CPU; both can be optimised once hardware numbers exist.
-- **gx2gl gaps:** screenshots are black (`glReadPixels`), no stencil (`ref_gl`'s stencil shadows off),
-  polygon offset scaling unverified (decals may z-fight), HOME menu with the GL renderer untested, the
-  `GL_EQUAL` → `LEQUAL` workaround (ARCHITECTURE.md).
+  (`ref_gl` on gx2gl, ARCHITECTURE.md) is the fix: 30–60 FPS in the Hazard Course on hardware, and the
+  default since 2026-10-14 (`-ref soft` for the old one). gx2gl sends only changed state since
+  2026-10-14 (hardware FPS not compared yet). Still on the CPU: every vertex goes through immediate mode and
+  is converted to gx2gl's format. Next candidate: VBO support, so `ref_gl` can keep the world in GPU
+  memory.
+- **gx2gl gaps:** screenshots are black (`glReadPixels`), no stencil (`ref_gl`'s stencil shadows off, and
+  decals on transparent `{` surfaces such as grates are skipped), decals not yet checked on hardware, water
+  not checked yet, the `GL_EQUAL` → `LEQUAL` workaround (ARCHITECTURE.md).
+- **Decals in Cemu:** invisible with the recompiler (Cemu bug, DEBUGGING.md); use `--force-interpreter`.
 - **Settings hidden on Wii U:** video modes, touch controls, the update check, Previews and the mouse-only
   options (mouse sensitivity, invert mouse, mouse look, look strafe, mouse filter, raw input, input
   devices). Stick look speed is `joy_yaw` / `joy_pitch` in degrees per second (180 / 120); the mouse
@@ -100,14 +109,15 @@
 ## Roadmap
 
 1. Hardware renderer (`ref_gl` on gx2gl, ARCHITECTURE.md), **required before release**: started
-   2026-10-14; the Hazard Course plays at 30–60 FPS on hardware. Next: HOME → Close (fix waiting for a
-   test), then the rest of the effects (sprites, studio models, water, sky, decals, particles) checked map by map, then
-   make it the default and optimise.
+   2026-10-14; the Hazard Course plays at 30–60 FPS on hardware, HOME → Close works, and it's the default
+   renderer. Sprites, studio models, sky, decals and particles checked in Cemu. Next: optimise (state
+   re-sending, CPU vertex work), check water and decals on hardware, `glReadPixels` for screenshots.
 2. Confirm on hardware: the gyro yaw flip, the in-game Quit.
-3. On-screen keyboard for the console and save names (SDL's Wii U swkbd).
+3. On-screen keyboard: SDL's swkbd opens for the console and is drawn by gx2gl since 2026-10-14 (to
+   confirm on hardware). Check save names and the multiplayer name field too.
 4. Play through the campaign in Cemu and on hardware; check whether the `zone.c` workaround is needed on
    hardware.
 5. Game selection plus Blue Shift (`bshift`) and Opposing Force (`gearbox`) game code. Both are in the Steam
    install, and hlsdk-portable has branches for them.
-6. Polish: icon and splash art, a first-run message with clear instructions when `sd:/halflife/valve` is
+6. Polish: icon and splash art, a first-run message with clear instructions when `sd:/wiiu/apps/halflife/valve` is
    missing (currently only in the log), GamePad screen use (HUD, console or map).

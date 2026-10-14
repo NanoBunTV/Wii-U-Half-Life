@@ -16,13 +16,18 @@ extern "C" {
 int GX2GL_CreateContext( int width, int height );
 void GX2GL_DestroyContext( void );
 
-// show the frame on the TV and the GamePad
-void GX2GL_SwapBuffers( void );
+// show the frame on the TV and the GamePad. keyboardWindow: the SDL_Window while SDL's on-screen
+// keyboard is shown (drawn over the frame like SDL's own present does), otherwise NULL
+void GX2GL_SwapBuffers( void *keyboardWindow );
 
 // 0 = don't wait for vsync
 void GX2GL_SetSwapInterval( int interval );
 
 void *GX2GL_GetProcAddress( const char *name );
+
+// glGetString( GX2GL_STATS ): performance counters averaged over the last half second, shown by
+// ref_gl's r_speeds 6 on Wii U (the value is from GL's reserved range, not used by real GL)
+#define GX2GL_STATS 0x6A00
 
 #ifdef __cplusplus
 }

@@ -33,8 +33,9 @@ GNU General Public License for more details.
 
 #include "platform/platform.h"
 
-// Where the user copies their game files. "valve" (and later other game folders) go inside it.
-#define WIIU_BASEDIR      "fs:/vol/external01/halflife"
+// Where the user copies their game files, next to halflife.wuhb in sd:/wiiu/apps.
+// "valve" (and later other game folders) go inside it.
+#define WIIU_BASEDIR      "fs:/vol/external01/wiiu/apps/halflife"
 // Optional file with extra command line arguments, one line, e.g. "-dev 2 -console"
 #define WIIU_CMDLINE_FILE WIIU_BASEDIR "/cmdline.txt"
 // The .wuhb's own read-only files (content/ folder at build time)
@@ -230,7 +231,7 @@ qboolean WiiU_GetBasePath( char *buf, const size_t buflen )
 	}
 
 	// SD card missing or game files not copied yet
-	printf( "Can't find %s. Copy your Half-Life \"valve\" folder to sd:/halflife/valve\n", WIIU_BASEDIR );
+	printf( "Can't find %s. Copy your Half-Life \"valve\" folder to sd:/wiiu/apps/halflife/valve\n", WIIU_BASEDIR );
 	return false;
 }
 

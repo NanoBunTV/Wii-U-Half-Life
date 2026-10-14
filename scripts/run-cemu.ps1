@@ -5,7 +5,7 @@
 .DESCRIPTION
   .\scripts\run-cemu.ps1                    run build\halflife.wuhb with Cemu's default (recompiler) CPU mode
   .\scripts\run-cemu.ps1 -Interpreter       single-core interpreter (slow, but exact; see Docs/DEBUGGING.md)
-  .\scripts\run-cemu.ps1 -EngineArgs '-dev 2'   write sd:/halflife/cmdline.txt first (engine arguments)
+  .\scripts\run-cemu.ps1 -EngineArgs '-dev 2'   write sd:/wiiu/apps/halflife/cmdline.txt first (engine arguments)
   .\scripts\run-cemu.ps1 -Seconds 60        close Cemu after 60 s (default: leave it running)
 
   Engine output appears in Cemu's log as "[OSConsole]" lines; that needs Cemu's "Coreinit Logging"
@@ -25,7 +25,7 @@ $Wuhb = (Resolve-Path $Wuhb).Path
 $log = Join-Path $env:APPDATA 'Cemu\log.txt'
 
 if ($PSBoundParameters.ContainsKey('EngineArgs')) {
-	$cmdline = Join-Path $SdCard 'halflife\cmdline.txt'
+	$cmdline = Join-Path $SdCard 'wiiu\apps\halflife\cmdline.txt'
 	Set-Content -LiteralPath $cmdline -Value $EngineArgs -NoNewline
 	Write-Host "cmdline.txt: '$EngineArgs'"
 }

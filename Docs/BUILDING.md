@@ -103,9 +103,9 @@ Requires the Aroma environment.
 
 1. Copy `build\halflife.wuhb` to `sd:/wiiu/apps/`.
 2. Copy the `valve` folder from the Steam install, e.g.
-   `E:\Programs\Steam Library\steamapps\common\Half-Life\valve`, to `sd:/halflife/valve`. The folder is about
+   `E:\Programs\Steam Library\steamapps\common\Half-Life\valve`, to `sd:/wiiu/apps/halflife/valve`. The folder is about
    600 MB. The other folders (`valve_hd`, `valve_downloads`, `bshift`, `gearbox`, `cstrike`) aren't used yet.
-3. Optional: put engine arguments in `sd:/halflife/cmdline.txt` on one line, e.g. `-dev 2 -console`.
+3. Optional: put engine arguments in `sd:/wiiu/apps/halflife/cmdline.txt` on one line, e.g. `-dev 2 -console`.
 
 ## Icon and splash screens
 
