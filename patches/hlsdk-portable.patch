@@ -15,6 +15,115 @@ index 341ab90..8098991 100644
  
  	m_iFlags |= HUD_ACTIVE; //!!!
  
+diff --git a/cl_dll/studio_util.cpp b/cl_dll/studio_util.cpp
+index 9abfaae..0f46791 100644
+--- a/cl_dll/studio_util.cpp
++++ b/cl_dll/studio_util.cpp
+@@ -17,6 +17,37 @@
+ #include "neon_mathfun.h"
+ #endif
+ 
++#if XASH_WIIU
++// The Wii U's CPU (PowerPC 750) has no fast sin/cos/acos: newlib's take well over 100 cycles each, and
++// bone setup calls them about 16 times per bone and animation layer. These are close enough for
++// animation (sin/cos within ~1e-7 for the angles bones use)
++static inline void WiiU_SinCos( float x, float *s, float *c )
++{
++	// reduce to r in [-pi/4, pi/4] and a quadrant, pi/2 split in two parts for precision
++	float fq = x * 0.63661977f;
++	int q = (int)( fq >= 0.0f ? fq + 0.5f : fq - 0.5f );
++	float r = ( x - (float)q * 1.57079637f ) + (float)q * 4.37113883e-8f;
++	float r2 = r * r;
++	float sr = r + r * r2 * ( -1.66666667e-1f + r2 * ( 8.33333333e-3f + r2 * ( -1.98412698e-4f + r2 * 2.75573192e-6f )));
++	float cr = 1.0f + r2 * ( -0.5f + r2 * ( 4.16666667e-2f + r2 * ( -1.38888889e-3f + r2 * 2.48015873e-5f )));
++
++	switch( q & 3 )
++	{
++	case 0: *s = sr; *c = cr; break;
++	case 1: *s = cr; *c = -sr; break;
++	case 2: *s = -sr; *c = -cr; break;
++	default: *s = -cr; *c = sr; break;
++	}
++}
++
++static inline float WiiU_Sin( float x )
++{
++	float s, c;
++	WiiU_SinCos( x, &s, &c );
++	return s;
++}
++#endif
++
+ /*
+ ================
+ ConcatTransforms
+@@ -111,9 +142,15 @@ void AngleQuaternion( float *angles, vec4_t quaternion )
+ 	//quaternion[2] =   B * cp - D * sp; // Z
+ 	//quaternion[3] =   C * cp + A * sp; // W
+ #else
+-	float angle;
+ 	float sr, sp, sy, cr, cp, cy;
+ 
++#if XASH_WIIU
++	WiiU_SinCos( angles[2] * 0.5f, &sy, &cy );
++	WiiU_SinCos( angles[1] * 0.5f, &sp, &cp );
++	WiiU_SinCos( angles[0] * 0.5f, &sr, &cr );
++#else
++	float angle;
++
+ 	// FIXME: rescale the inputs to 1/2 angle
+ 	angle = angles[2] * 0.5f;
+ 	sy = sin( angle );
+@@ -124,6 +161,7 @@ void AngleQuaternion( float *angles, vec4_t quaternion )
+ 	angle = angles[0] * 0.5f;
+ 	sr = sin( angle );
+ 	cr = cos( angle );
++#endif
+ 
+ 	quaternion[0] = sr * cp * cy - cr * sp * sy; // X
+ 	quaternion[1] = cr * sp * cy + sr * cp * sy; // Y
+@@ -212,14 +250,41 @@ void QuaternionSlerp( vec4_t p, vec4_t q, float t, vec4_t qt )
+ 
+ 	cosom = p[0] * q[0] + p[1] * q[1] + p[2] * q[2] + p[3] * q[3];
+ 
++#if XASH_WIIU
++	if( cosom > 0.95f )
++	{
++		// close quaternions (neighbouring animation frames): a normalised linear blend is within about
++		// 0.06 degrees of the spherical one here and needs no acos/sin. 1/sqrt by two Newton steps from 1,
++		// the length is at least 0.98 (the PowerPC 750 has no sqrt instruction)
++		float len2, inv = 1.0f;
++
++		for( i = 0; i < 4; i++ )
++			qt[i] = ( 1.0f - t ) * p[i] + t * q[i];
++
++		len2 = qt[0] * qt[0] + qt[1] * qt[1] + qt[2] * qt[2] + qt[3] * qt[3];
++		inv = inv * ( 1.5f - 0.5f * len2 * inv * inv );
++		inv = inv * ( 1.5f - 0.5f * len2 * inv * inv );
++
++		for( i = 0; i < 4; i++ )
++			qt[i] *= inv;
++		return;
++	}
++#endif
++
+ 	if( ( 1.0f + cosom ) > 0.000001f )
+ 	{
+ 		if( ( 1.0f - cosom ) > 0.000001f )
+ 		{
+ 			omega = acos( cosom );
++#if XASH_WIIU
++			sinom = WiiU_Sin( omega );
++			sclp = WiiU_Sin( ( 1.0f - t ) * omega ) / sinom;
++			sclq = WiiU_Sin( t * omega ) / sinom;
++#else
+ 			sinom = sin( omega );
+ 			sclp = sin( ( 1.0f - t ) * omega ) / sinom;
+ 			sclq = sin( t * omega ) / sinom;
++#endif
+ 		}
+ 		else
+ 		{
 diff --git a/public/build.h b/public/build.h
 index a948925..2ebaacf 100644
 --- a/public/build.h

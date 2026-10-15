@@ -42,6 +42,9 @@
 | 2026-10-14 | Blue Shift + Opposing Force (`bshift.wuhb`, `opfor.wuhb`), menus trimmed (no Multiplayer / Change game, Console always shown, Controls list GamePad-only), HUD text x2, config version 1 | Cemu 2.6, recompiler | Blue Shift: ba_tram1 with its blue HUD and credits (now readable). Opposing Force: of1a1 with its own entities. Main menu: Console, New game, Hazard course, Configuration, Load game, Quit. Cemu itself crashed on `changelevel` and on the Opposing Force menu; both fine with `--force-interpreter` (Opposing Force Controls: no Communication / Capture the Flag sections, only GamePad buttons) |
 | 2026-10-14 | gx2gl: 32-byte vertices written once + indexed draws, fast path for ref_gl's model arrays; `r_speeds 6` frame phase breakdown | Cemu 2.6, recompiler | c1a0 lobby (same view): CPU 5.9 → 4.1 ms, studio model vertices 3.5 → 1.6 ms. c2a5: correct. (Cemu timings, not hardware) |
 | 2026-10-14 | polygon offset factor no longer ×16 (GX2 does it) | Cemu 2.6, recompiler | Owner saw faces through other faces; c1a0's door wheels poked through the wall above them (also with the old gx2gl). Fixed; the wheels match `-ref soft` apart from GL's brighter lighting |
+| 2026-10-14 | same | **Real Wii U** (owner), `r_speeds 6` | 58–60 FPS everywhere shown. c1a0 tram with the lobby in view: CPU 8.9 ms (game 1.3, client 0.4, sound 1.2, world 1.4, entities 3.0 of which studio models 2.4 / their vertices 2.0, HUD 0.3, gx2gl 0.5), 199 draws, 10,120 verts, 2,976 model polys. Tram in a tunnel: CPU 4.8 ms. c1a0 lobby: CPU 8.8 ms (game 1.6, client 1.3, sound 0.2, world 1.1, studio models 2.1 / vertices 1.8). Hardware takes about twice Cemu's CPU time |
+| 2026-10-14 | same | **Real Wii U** (owner), `r_speeds 6` | c1a0 door wheels correct. Surface Tension: canyon with 3 soldiers 60 FPS, CPU 12.4 ms (game 2.6, studio models 3.4). Open walled area with 4–5 soldiers 59 FPS, **CPU 16.5 ms, at the limit**: game 2.5, client 1.4, world 2.4, entities 6.4 of which studio models 5.4 (vertices 3.2, so about 2.2 in the game's bone setup), HUD 0.8, gx2gl 0.8; 322 draws, 13,808 verts, 4,615 model polys |
+| 2026-10-14 | fast sin/cos + blending for animation, cheaper model lighting | **Real Wii U** (owner), `r_speeds 6` | Same walled area, 4 soldiers: **CPU 15.2 ms** (was 16.5): game 2.0, client 3.4, sound 0.2, world 2.0, entities 5.1 of which studio models **4.0** (was 5.4; vertices 2.6, was 3.2; bones about 1.4, was 2.2), HUD 0.9, gx2gl 0.7; 273 draws, 13,324 verts, 4,495 model polys. 52 FPS: frame 19.3 ms with 4.0 ms vsync wait, so some frames still miss the 16.7 ms vsync |
 
 ## Test checklist for new builds
 
@@ -100,7 +103,10 @@
   default since 2026-10-14 (`-ref soft` for the old one). gx2gl sends only changed state, writes each
   vertex once (32 bytes, indexed draws) and copies model arrays directly since 2026-10-14 (hardware FPS
   not compared yet). `r_speeds 6` shows where the CPU time goes (ARCHITECTURE.md); the next step depends on
-  hardware numbers from scenes that drop below 60 FPS. Candidates: ref_gl's studio model CPU work, VBO
+  hardware numbers from scenes that drop below 60 FPS. A Surface Tension fight with 4–5 soldiers used
+  16.5 of 16.7 ms, 5.4 of them for models; fast sin/cos and blending for model animation and cheaper model
+  lighting followed (2026-10-14, ARCHITECTURE.md): 15.2 ms there on hardware, studio models 4.0 ms, but
+  still 52 FPS because some frames miss vsync. Further candidates: the client's 3.4 ms in that scene, VBO
   support for the world.
 - **Save dates show Jan 1 1980** in Cemu (file time 0); not checked on hardware.
 - **gx2gl gaps:** no stencil (`ref_gl`'s stencil shadows off, and
@@ -125,8 +131,9 @@
 
 1. Hardware renderer (`ref_gl` on gx2gl, ARCHITECTURE.md), **required before release**: started
    2026-10-14; the Hazard Course plays at 30–60 FPS on hardware, HOME → Close works, and it's the default
-   renderer. Sprites, studio models, sky, decals and particles checked in Cemu. Next: optimise (state
-   re-sending, CPU vertex work), check water on hardware. Screenshots and save pictures work since
+   renderer. Sprites, studio models, sky, decals and particles checked in Cemu. Performance is done for
+   now (owner, 2026-10-14: 52–60 FPS in heavy fights is fine). Next: the gx2gl gaps (stencil, water) and
+   checking water on hardware. Screenshots and save pictures work since
    2026-10-14 (`glReadPixels`).
 2. Confirm on hardware: the gyro yaw flip, the in-game Quit.
 3. On-screen keyboard: SDL's swkbd opens for the console and is drawn by gx2gl since 2026-10-14 (to

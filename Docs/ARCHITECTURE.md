@@ -249,6 +249,15 @@ engine's `GL_GetProcAddress`, which on Wii U is `GX2GL_GetProcAddress`.
   bone setup) and their vertex part (`R_StudioDrawPoints`), HUD/menus, and gx2gl's own share (sending
   draws, uploads); then draw calls, vertices and polygon counts. The phases are timed with
   `GX2GL_PROF( phase, call )` (`gx2gl.h`) in `host.c`, `cl_main.c`, `gl_rmain.c` and `gl_studio.c`.
+- **Model animation and lighting on the CPU (2026-10-14):** the Wii U's CPU has no fast sin/cos/acos
+  (newlib's take well over 100 cycles), and bone setup calls them about 16 times per bone and animation
+  layer. Under `XASH_WIIU`, the engine's `SinCos` (`public/xash3d_mathlib.h`, used by view, movement and
+  the server's hitbox bone setup) and the games' `AngleQuaternion` (`cl_dll/studio_util.cpp` in all three
+  hlsdk trees) use a polynomial sin/cos (within ~1e-6), and `QuaternionSlerp` uses a normalised linear
+  blend when the two rotations are close (cos > 0.95, within 0.06 degrees of the exact result). ref_gl's
+  `gl_studio.c` turns each normal's light value into colour bytes once (instead of at every triangle
+  corner) and skips the per-vertex dynamic light setup when no dynamic light touches the model. Cemu runs
+  the math natively, so these only show on hardware.
 - **Polygon offset:** GL's factor goes to `GX2SetPolygonOffset` unchanged, because GX2 itself multiplies
   it by 16 for the register (Cemu's GX2 does the same). Until 2026-10-14 gx2gl multiplied by 16 as well,
   so brush entities (ref_gl draws them with `gl_polyoffset_bmodels`, factor -0.5) were pulled 16 times too

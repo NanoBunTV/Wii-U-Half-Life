@@ -1510,6 +1510,71 @@ index 712c3e4..fd17eee 100644
  	#define HAVE_DUP
  #endif
  
+diff --git a/public/xash3d_mathlib.c b/public/xash3d_mathlib.c
+index aa99708..f68e3e0 100644
+--- a/public/xash3d_mathlib.c
++++ b/public/xash3d_mathlib.c
+@@ -317,6 +317,27 @@ static void QuaternionSlerpNoAlign( const vec4_t p, const vec4_t q, float t, vec
+ 	float cosom = p[0] * q[0] + p[1] * q[1] + p[2] * q[2] + p[3] * q[3];
+ 	float sclp, sclq;
+ 
++#if XASH_WIIU
++	if( cosom > 0.95f )
++	{
++		// close quaternions (neighbouring animation frames): a normalised linear blend is within about
++		// 0.06 degrees of the spherical one here and needs no acos/sin, which are slow on the Wii U's
++		// CPU. 1/sqrt by two Newton steps from 1, the length is at least 0.98
++		float len2, inv = 1.0f;
++
++		for( int i = 0; i < 4; i++ )
++			qt[i] = ( 1.0f - t ) * p[i] + t * q[i];
++
++		len2 = qt[0] * qt[0] + qt[1] * qt[1] + qt[2] * qt[2] + qt[3] * qt[3];
++		inv = inv * ( 1.5f - 0.5f * len2 * inv * inv );
++		inv = inv * ( 1.5f - 0.5f * len2 * inv * inv );
++
++		for( int i = 0; i < 4; i++ )
++			qt[i] *= inv;
++		return;
++	}
++#endif
++
+ 	if(( 1.0f + cosom ) > 0.000001f )
+ 	{
+ 		if(( 1.0f - cosom ) > 0.000001f )
+diff --git a/public/xash3d_mathlib.h b/public/xash3d_mathlib.h
+index afbc183..57f00ba 100644
+--- a/public/xash3d_mathlib.h
++++ b/public/xash3d_mathlib.h
+@@ -381,8 +381,28 @@ static inline float anglemod( float a )
+ 
+ static inline void SinCos( float radians, float *sine, float *cosine )
+ {
++#if XASH_WIIU
++	// newlib's sin/cos (double precision here) take well over 100 cycles each on the Wii U's CPU, and
++	// bone setup, view and movement math call them a lot. Within ~1e-6 for |radians| < 20: reduce to
++	// [-pi/4, pi/4] and a quadrant (pi/2 split in two parts for precision), then short polynomials
++	float fq = radians * 0.63661977f;
++	int q = (int)( fq >= 0.0f ? fq + 0.5f : fq - 0.5f );
++	float r = ( radians - (float)q * 1.57079637f ) + (float)q * 4.37113883e-8f;
++	float r2 = r * r;
++	float s = r + r * r2 * ( -1.66666667e-1f + r2 * ( 8.33333333e-3f + r2 * ( -1.98412698e-4f + r2 * 2.75573192e-6f )));
++	float c = 1.0f + r2 * ( -0.5f + r2 * ( 4.16666667e-2f + r2 * ( -1.38888889e-3f + r2 * 2.48015873e-5f )));
++
++	switch( q & 3 )
++	{
++	case 0: *sine = s; *cosine = c; break;
++	case 1: *sine = c; *cosine = -s; break;
++	case 2: *sine = -s; *cosine = -c; break;
++	default: *sine = -c; *cosine = s; break;
++	}
++#else
+ 	*sine = sin( radians );
+ 	*cosine = cos( radians );
++#endif
+ }
+ 
+ static inline int NearestPOW( int value, qboolean roundDown )
 diff --git a/ref/gl/gl_backend.c b/ref/gl/gl_backend.c
 index 144771c..4c294c6 100644
 --- a/ref/gl/gl_backend.c
@@ -1569,7 +1634,7 @@ index 97b1211..b8cb087 100644
  	return;
  }
 diff --git a/ref/gl/gl_studio.c b/ref/gl/gl_studio.c
-index 39873fb..ce04594 100644
+index 39873fb..aae18f4 100644
 --- a/ref/gl/gl_studio.c
 +++ b/ref/gl/gl_studio.c
 @@ -20,6 +20,11 @@ GNU General Public License for more details.
@@ -1584,7 +1649,55 @@ index 39873fb..ce04594 100644
  
  #define EVENT_CLIENT	5000	// less than this value it's a server-side studio events
  #define MAX_LOCALLIGHTS	4
-@@ -1945,7 +1950,15 @@ R_StudioDrawPoints
+@@ -87,6 +92,7 @@ typedef struct
+ 	vec3_t		lightcolor;		// averaging lightcolor
+ 	vec3_t		blightvec[MAXSTUDIOBONES];	// bone light vecs
+ 	vec3_t		lightvalues[MAXSTUDIOVERTS];	// precomputed lightvalues per each shared vertex of submodel
++	byte		lightbytes[MAXSTUDIOVERTS][3];	// the same as colour bytes, used while no local light touches the model
+ 
+ 	// chrome stuff
+ 	vec3_t		chrome_origin;
+@@ -1366,7 +1372,7 @@ static void R_StudioLighting( float *lv, int bone, int flags, vec3_t normal )
+ 
+ 	illum = Q_min( illum, 255.0f );
+ 
+-	*lv = LightToTexGamma( illum * 4 ) / 1023.0f;
++	*lv = LightToTexGamma( illum * 4 ) * ( 1.0f / 1023.0f );
+ }
+ 
+ /*
+@@ -1430,9 +1436,29 @@ static void R_LightLambert( vec4_t light[MAX_LOCALLIGHTS], const vec3_t normal,
+ 
+ static void R_StudioSetColorArray( short *ptricmds, vec3_t *pstudionorms, byte *color )
+ {
++	static float lastblend = -1.0f;
++	static byte lastalpha;
+ 	float	*lv = (float *)g_studio.lightvalues[ptricmds[1]];
+ 
+-	color[3] = tr.blend * 255;
++	// float to byte conversions are slow on some CPUs (Wii U): convert once, not for every vertex
++	if( tr.blend != lastblend )
++	{
++		lastblend = tr.blend;
++		lastalpha = tr.blend * 255;
++	}
++	color[3] = lastalpha;
++
++	if( !g_studio.numlocallights )
++	{
++		// R_LightLambert would only scale the light value to bytes, which was done per normal
++		const byte *b = g_studio.lightbytes[ptricmds[1]];
++
++		color[0] = b[0];
++		color[1] = b[1];
++		color[2] = b[2];
++		return;
++	}
++
+ 	R_LightLambert( g_studio.lightpos[ptricmds[0]], pstudionorms[ptricmds[1]], lv, color );
+ }
+ 
+@@ -1945,7 +1971,15 @@ R_StudioDrawPoints
  
  ===============
  */
@@ -1600,7 +1713,48 @@ index 39873fb..ce04594 100644
  {
  	float		shellscale = 0.0f;
  	qboolean		need_sort = false;
-@@ -3203,7 +3216,15 @@ static int R_StudioDrawModel( int flags )
+@@ -1981,7 +2015,8 @@ static void R_StudioDrawPoints( void )
+ 		{
+ 			R_StudioComputeSkinMatrix( &pvertweight[i], skinMat );
+ 			Matrix3x4_VectorTransform( skinMat, pstudioverts[i], g_studio.verts[i] );
+-			R_LightStrength( pvertbone[i], pstudioverts[i], g_studio.lightpos[i] );
++			if( g_studio.numlocallights )
++				R_LightStrength( pvertbone[i], pstudioverts[i], g_studio.lightpos[i] );
+ 		}
+ 
+ 		for( int i = 0; i < numnorms; i++ )
+@@ -1995,8 +2030,12 @@ static void R_StudioDrawPoints( void )
+ 		for( int i = 0; i < numverts; i++ )
+ 			Matrix3x4_VectorTransform( g_studio.bonestransform[pvertbone[i]], pstudioverts[i], g_studio.verts[i] );
+ 
+-		for( int i = 0; i < numverts; i++ )
+-			R_LightStrength( pvertbone[i], pstudioverts[i], g_studio.lightpos[i] );
++		// only needed for local (dynamic) lights
++		if( g_studio.numlocallights )
++		{
++			for( int i = 0; i < numverts; i++ )
++				R_LightStrength( pvertbone[i], pstudioverts[i], g_studio.lightpos[i] );
++		}
+ 	}
+ 
+ 	// generate shared normals for properly scaling glowing shell
+@@ -2027,6 +2066,7 @@ static void R_StudioDrawPoints( void )
+ 				if( FBitSet( g_nFaceFlags, STUDIO_NF_CHROME ))
+ 					R_StudioSetupChrome( g_studio.chrome[k], *pnormbone, (float *)pstudionorms );
+ 				VectorSet( g_studio.lightvalues[k], tr.blend, tr.blend, tr.blend );
++				VectorScale( g_studio.lightvalues[k], 255.0f, g_studio.lightbytes[k] );
+ 			}
+ 		}
+ 		else
+@@ -2041,6 +2081,7 @@ static void R_StudioDrawPoints( void )
+ 				if( FBitSet( g_nFaceFlags, STUDIO_NF_CHROME ))
+ 					R_StudioSetupChrome( g_studio.chrome[k], *pnormbone, (float *)pstudionorms );
+ 				VectorScale( g_studio.lightcolor, lv_tmp, g_studio.lightvalues[k] );
++				VectorScale( g_studio.lightvalues[k], 255.0f, g_studio.lightbytes[k] );
+ 			}
+ 		}
+ 	}
+@@ -3203,7 +3244,15 @@ static int R_StudioDrawModel( int flags )
  R_StudioDrawModelInternal
  =================
  */
