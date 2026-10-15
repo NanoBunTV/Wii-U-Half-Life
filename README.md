@@ -102,6 +102,7 @@ happened. For slowdowns, a screenshot with `r_speeds 6` turned on in the console
  - [Cemu](https://cemu.info/) - used for testing during development.
  - The [Wii port of Xash3D](https://github.com/MintFerret/xash3d-fwgs) - proved that statically linking Xash3D
    on a big-endian Nintendo console works.
+ - Claude - AI assistance.
 
 ## License
 
