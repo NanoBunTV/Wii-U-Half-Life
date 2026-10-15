@@ -32,6 +32,10 @@
 | 2026-10-14 | vsync waits only with 2 flips pending, `r_speeds 6` counters, `snd_gain` 1.5 | Cemu 2.6, recompiler | c2a5: 4.7 ms CPU per frame, 215 draws, 11,400 vertices (Cemu's CPU is much faster than the console's) |
 | 2026-10-14 | same | **Real Wii U** (owner) | c1a0 tram: **61 FPS**, frame 17.0 ms = 8.1 ms CPU + 8.9 ms vsync wait, GPU wait 0, 59 draws, 6,072 vertices. The console's on-screen keyboard is invisible with `ref_gl` (key clicks are heard) |
 | 2026-10-14 | gx2gl draws SDL's on-screen keyboard (`WIIU_SWKBD_Draw`) | Cemu 2.6, recompiler | `+toggleconsole`: keyboard shown, no crash. With SDL's sRGB switch around the draw Cemu crashed, so that's left out |
+| 2026-10-14 | same | **Real Wii U** (owner) | **Keyboard shows. Decals and screen shake work.** GamePad rumble not felt. Load Game list: "<missing GameHeader>" for Wii U saves, "<corrupted>" for the Steam PC saves; opening it in c4a1 crashed (DSI in `strcasecmp` from `SV_GetSaveComment`). Loading a quick save from the title screen popped up the keyboard |
+| 2026-10-14 | save list fix, keyboard only on purpose, rumble pattern starts "on", `hud_fastswitch 1` | Cemu 2.6, recompiler | Load Game in-game: Wii U save listed ("APPREHENSION", 00:04), PC saves "<PC save, can't be loaded>", no crash. Console keyboard still opens with `toggleconsole`. Save dates show Jan 1 1980 (file time 0, at least in Cemu) |
+| 2026-10-14 | same | **Real Wii U** (owner) | **Loading works** (quick saves from the title screen, c2a3 → c0a0 → c4a1). GamePad rumble still not felt |
+| 2026-10-14 | rumble v3 (solid runs, no per-frame re-send, logged), `glReadPixels`, missing game files screen | Cemu 2.6, recompiler | `vibrate 500` / `vibrate 1500`: `VPADControlMotor returned 0`. Save picture (356×200) and `screenshot` (1280×720 PNG in `valve/scrshots`) show the scene, right way up (black with `LINEAR_ALIGNED`). Without `valve/` the help text appears on the TV |
 
 ## Test checklist for new builds
 
@@ -91,8 +95,12 @@
   2026-10-14 (hardware FPS not compared yet). Still on the CPU: every vertex goes through immediate mode and
   is converted to gx2gl's format. Next candidate: VBO support, so `ref_gl` can keep the world in GPU
   memory.
-- **gx2gl gaps:** screenshots are black (`glReadPixels`), no stencil (`ref_gl`'s stencil shadows off, and
-  decals on transparent `{` surfaces such as grates are skipped), decals not yet checked on hardware, water
+- **GamePad rumble not felt on hardware yet** (two attempts). The third version (2026-10-14) uses solid
+  runs and doesn't re-send every frame, and logs what `VPADControlMotor` returns; test with `vibrate 1000`
+  in the console and check `engine.log` (ARCHITECTURE.md).
+- **Save dates show Jan 1 1980** in Cemu (file time 0); not checked on hardware.
+- **gx2gl gaps:** no stencil (`ref_gl`'s stencil shadows off, and
+  decals on transparent `{` surfaces such as grates are skipped), water
   not checked yet, the `GL_EQUAL` → `LEQUAL` workaround (ARCHITECTURE.md).
 - **Decals in Cemu:** invisible with the recompiler (Cemu bug, DEBUGGING.md); use `--force-interpreter`.
 - **Settings hidden on Wii U:** video modes, touch controls, the update check, Previews and the mouse-only
@@ -111,7 +119,8 @@
 1. Hardware renderer (`ref_gl` on gx2gl, ARCHITECTURE.md), **required before release**: started
    2026-10-14; the Hazard Course plays at 30–60 FPS on hardware, HOME → Close works, and it's the default
    renderer. Sprites, studio models, sky, decals and particles checked in Cemu. Next: optimise (state
-   re-sending, CPU vertex work), check water and decals on hardware, `glReadPixels` for screenshots.
+   re-sending, CPU vertex work), check water on hardware. Screenshots and save pictures work since
+   2026-10-14 (`glReadPixels`).
 2. Confirm on hardware: the gyro yaw flip, the in-game Quit.
 3. On-screen keyboard: SDL's swkbd opens for the console and is drawn by gx2gl since 2026-10-14 (to
    confirm on hardware). Check save names and the multiplayer name field too.
@@ -120,4 +129,5 @@
 5. Game selection plus Blue Shift (`bshift`) and Opposing Force (`gearbox`) game code. Both are in the Steam
    install, and hlsdk-portable has branches for them.
 6. Polish: icon and splash art, a first-run message with clear instructions when `sd:/wiiu/apps/halflife/valve` is
-   missing (currently only in the log), GamePad screen use (HUD, console or map).
+   missing (done 2026-10-14; other fatal errors still just close the app, as SDL has no message box on Wii
+   U), GamePad screen use (HUD, console or map).

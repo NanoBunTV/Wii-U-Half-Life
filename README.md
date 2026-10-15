@@ -4,8 +4,8 @@ A native port of Half-Life to the Wii U (Aroma homebrew), running on the open-so
 [Xash3D FWGS](https://github.com/FWGS/xash3d-fwgs) engine with [hlsdk-portable](https://github.com/FWGS/hlsdk-portable)
 game code.
 
-**Work in progress.** It reaches the main menu in the Cemu emulator, and hasn't been tested on a real Wii U
-yet. See [Docs/STATUS.md](Docs/STATUS.md).
+**Work in progress.** The game is playable on a real Wii U (hardware rendering, 30–60 FPS), with some
+gaps. See [Docs/STATUS.md](Docs/STATUS.md).
 
 **You need your own copy of Half-Life** (Steam). No game files are included.
 
@@ -16,7 +16,7 @@ Requires the Aroma environment.
 1. Copy `halflife.wuhb` to `sd:/wiiu/apps/`.
 2. Copy the `valve` folder from your Steam install (`Steam\steamapps\common\Half-Life\valve`, about 600 MB)
    to `sd:/wiiu/apps/halflife/valve`.
-3. Start Half-Life from the Wii U menu.
+3. Start Half-Life from the Wii U menu. If the game files aren't found, it says so on screen.
 
 ## Controls (Wii U GamePad)
 
@@ -40,6 +40,10 @@ drifts. To recenter,
 hold −, move the GamePad back to a comfortable position and let go. Gyro aiming can be turned off, inverted or made faster/slower in
 Configuration → Gamepad → Gyroscope. Buttons can be rebound in Configuration → Controls; stick speed is in
 Configuration → Gamepad.
+
+R / L switch weapons directly (`hud_fastswitch 1`); with `hud_fastswitch 0` they only move the selection
+and ZR confirms. The console (Main menu → Console) opens the GamePad keyboard; press Y to bring it back
+after closing it. Saves copied from a PC can't be loaded and are marked as such in Load Game.
 
 Sound is boosted by default (`snd_gain 1.5`) because the GamePad's speakers are quiet. If loud sounds
 distort, lower it, for example with `+snd_gain 1.2` in `sd:/wiiu/apps/halflife/cmdline.txt`; the value is

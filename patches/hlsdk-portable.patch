@@ -1,3 +1,20 @@
+diff --git a/cl_dll/ammo.cpp b/cl_dll/ammo.cpp
+index 341ab90..8098991 100644
+--- a/cl_dll/ammo.cpp
++++ b/cl_dll/ammo.cpp
+@@ -281,7 +281,12 @@ int CHudAmmo::Init( void )
+ 	Reset();
+ 
+ 	CVAR_CREATE( "hud_drawhistory_time", HISTORY_DRAW_TIME, 0 );
++#if defined( __WIIU__ )
++	// on the GamePad, L/R should switch weapons directly instead of only moving the selection
++	CVAR_CREATE( "hud_fastswitch", "1", FCVAR_ARCHIVE );
++#else
+ 	CVAR_CREATE( "hud_fastswitch", "0", FCVAR_ARCHIVE );		// controls whether or not weapons can be selected in one keypress
++#endif
+ 
+ 	m_iFlags |= HUD_ACTIVE; //!!!
+ 
 diff --git a/public/build.h b/public/build.h
 index a948925..2ebaacf 100644
 --- a/public/build.h

@@ -128,9 +128,25 @@ Engine changes for the port are guarded by `#if XASH_WIIU`. They include:
 - HOME → Close (`SDL_QUIT`) quits immediately instead of opening the menu's quit dialog (`host_sdl2.c`);
 - GamePad rumble through `VPADControlMotor` (`Platform_Vibrate2` in `joy_sdl2.c`): SDL's Wii U driver has
   none, and each failed `SDL_GameControllerRumble` logged an SDL error (every frame during `env_shake`).
-  The motor is on/off, so strength becomes the share of "on" bits, one bit per 1/120 s, up to 120 bits.
-  That's how Cemu reads the pattern; wut's header says the length is in bytes. Not yet felt on hardware;
+  The motor is on/off, driven by a bit pattern of 1/120 s steps, up to 120, first bit = most significant.
+  The length is in bits: Cemu and the SDK cap it at 120 with a 15-byte buffer (wut's header comment says
+  bytes), and Cemu plays it at that rate. Strength sets how many steps of each block of 8 are on (3 to 8),
+  a pattern lasts at least 1/10 s, and a new one is only sent when the current one is nearly over (Cemu
+  queues up to 5 patterns, so sending every frame would only pile up). The first two versions switched
+  the motor every step and sent a new pattern every frame during `env_shake`, and nothing was felt on
+  hardware. The first calls and any error are logged ("GamePad rumble: … VPADControlMotor returned …");
+  `vibrate <ms>` in the console tests it;
+- a screen explaining where to copy the game files when `sd:/wiiu/apps/halflife/valve` is missing
+  (`WiiU_CheckGameData` in `sys_wiiu.c`, OSScreen text through WHB's console, before SDL starts). SDL has no
+  message box on Wii U, so without it the app just closed;
 - `ref_gl` is the default renderer and the saved `r_refdll` is ignored (`ref_common.c`);
+- save list: `SV_GetSaveComment` (`sv_save.c`) reads the game's save fields little-endian (hlsdk-portable
+  stores them that way, `CSave::BufferData`) and checks token indices and field sizes; it used to crash or
+  show "<missing GameHeader>". Saves copied from a PC have a little-endian engine header and are listed as
+  "<PC save, can't be loaded>";
+- the console's keyboard opens when the console is opened (`Con_ToggleConsole_f`) or with Y, not whenever
+  the console gets focus (`Key_SetKeyDest`, as on Switch and Vita): it used to pop up while loading a save;
+- `hud_fastswitch` defaults to 1 (`cl_dll/ammo.cpp`, hlsdk-portable patch);
 - `snd_gain` (default 1.5, saved): final audio output gain before clipping (`s_mix.c`), because the
   GamePad's speakers were quiet at the PC level. SDL's Wii U audio already mixes at unity (`0x8000`);
 - big-endian fixes in `img_wad.c` (palette entry 255's alpha, `Image_FindBestBlack`);
@@ -198,5 +214,8 @@ engine's `GL_GetProcAddress`, which on Wii U is `GX2GL_GetProcAddress`.
   HOME → Close the renderer shuts down in the background, and its `GX2DrawDone` never returned (the
   system hung at the loading screen, 2026-10-14). Textures uploaded while in the background are lost.
 - **Differences from real OpenGL:** `GL_EQUAL` depth tests are done as `GL_LEQUAL` (lightmap passes
-  failed the exact test); `glReadPixels` returns black (screenshots); no stencil, `glTexGen`, clip planes,
+  failed the exact test); `glReadPixels` only does `GL_RGB`/`GL_RGBA` bytes and stalls until the GPU is
+  done (fine for screenshots and save pictures): it copies the colour buffer to a `GX2_TILE_MODE_LINEAR_SPECIAL`
+  surface, the mode games use for CPU reads. Cemu only writes the pixels back for that mode, so
+  `LINEAR_ALIGNED` came out black there; no stencil, `glTexGen`, clip planes,
   polygon modes, `GL_TEXTURE_ENV_COLOR`, 1D/3D/cube textures; fog is always `GL_EXP`-style on eye-space z.

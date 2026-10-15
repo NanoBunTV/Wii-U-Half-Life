@@ -23,6 +23,22 @@ index 7cd9c1f..4b18038 100644
  #elif XASH_ANDROID
  	#define DEFAULT_TOUCH_ENABLE "1"
  #elif XASH_MOBILE_PLATFORM
+diff --git a/engine/client/console.c b/engine/client/console.c
+index f4cb680..bdfafee 100644
+--- a/engine/client/console.c
++++ b/engine/client/console.c
+@@ -296,6 +296,11 @@ void Con_ToggleConsole_f( void )
+ 		// opening console - just switch key_dest, don't call UI_SetActiveMenu
+ 		// which would reset menu state via on_menu_hide()
+ 		Key_SetKeyDest( key_console );
++#if XASH_WIIU
++		// Key_SetKeyDest no longer shows the keyboard for the console (it did during loading too),
++		// so show it here, where the player opened the console on purpose. Y shows it again
++		Key_EnableTextInput( true, true );
++#endif
+ 	}
+ }
+ 
 diff --git a/engine/client/dll_int/ref_common.c b/engine/client/dll_int/ref_common.c
 index 8ea38dc..3181a63 100644
 --- a/engine/client/dll_int/ref_common.c
@@ -122,7 +138,7 @@ index 1da3114..f0eb75a 100644
  	Cvar_RegisterVariable( &joy_pitch );
  	Cvar_RegisterVariable( &joy_yaw );
 diff --git a/engine/client/input/in_keys.c b/engine/client/input/in_keys.c
-index 2203268..76e62e2 100644
+index 2203268..b949fe0 100644
 --- a/engine/client/input/in_keys.c
 +++ b/engine/client/input/in_keys.c
 @@ -367,6 +367,48 @@ static void Key_Unbind_f( void )
@@ -204,6 +220,15 @@ index 2203268..76e62e2 100644
  
  	Cvar_RegisterVariable( &key_rotate );
  
+@@ -957,7 +1008,7 @@ void GAME_EXPORT Key_SetKeyDest( int key_dest )
+ 		break;
+ 	case key_console:
+ 		cls.key_dest = key_console;
+-#if !XASH_NSWITCH && !XASH_PSVITA // if we don't disable this, pops up the keyboard during load
++#if !XASH_NSWITCH && !XASH_PSVITA && !XASH_WIIU // if we don't disable this, pops up the keyboard during load
+ 		Key_EnableTextInput( true, false );
+ #endif
+ 		break;
 diff --git a/engine/client/input/input.c b/engine/client/input/input.c
 index 09dfa2a..0394c1e 100644
 --- a/engine/client/input/input.c
@@ -581,7 +606,7 @@ index fbcc883..15f9354 100644
  }
  
 diff --git a/engine/platform/sdl2/joy_sdl2.c b/engine/platform/sdl2/joy_sdl2.c
-index 99d45b0..63699a1 100644
+index 99d45b0..13ea42e 100644
 --- a/engine/platform/sdl2/joy_sdl2.c
 +++ b/engine/platform/sdl2/joy_sdl2.c
 @@ -19,6 +19,9 @@ GNU General Public License for more details.
@@ -829,30 +854,55 @@ index 99d45b0..63699a1 100644
  #if SDL_VERSION_ATLEAST( 2, 0, 14 )
  static void SDLash_GameControllerTouchpadEvent( const SDL_ControllerTouchpadEvent *tpad, qboolean down )
  {
-@@ -363,7 +529,30 @@ void Platform_Vibrate2( float time, int val1, int val2, uint flags )
+@@ -363,7 +529,55 @@ void Platform_Vibrate2( float time, int val1, int val2, uint flags )
  		val2 = COM_RandomLong( 0x7FFF, 0xFFFF );
  
  	Uint32 ms = (Uint32)ceil( time );
 +#if XASH_WIIU
 +	// SDL's Wii U driver has no rumble: every call failed and logged an SDL error (env_shake asks every
-+	// frame). The GamePad's motor is on/off, driven by a bit pattern: strength becomes the share of
-+	// "on" bits, one bit per 1/120 s (at most 120 bits)
++	// frame). The GamePad's motor is on/off, driven by a bit pattern of 1/120 s steps (length in bits,
++	// at most 120, first bit = most significant). A motor needs a few steps to spin up: switching it
++	// every step, and sending a new pattern every frame (env_shake), was too short to be felt. So
++	// strength only sets how many steps of each block of 8 (1/15 s) are "on", at least 3, the pattern
++	// lasts at least 1/10 s, and a new one is only sent when the current one is nearly over (the console
++	// queues patterns instead of replacing them, so sending every frame would only make it lag behind)
 +	if( SDLash_IsWiiUGamePad( gc ))
 +	{
++		static double motor_end;
++		static int motor_log;
++		double now = Sys_DoubleTime();
++		float strength = Q_max( val1, val2 ) / 65535.0f;
++
++		if( strength <= 0.0f )
++		{
++			if( motor_end > now )
++				VPADStopMotor( VPAD_CHAN_0 );
++			motor_end = 0.0;
++			return;
++		}
++
++		if( motor_end - now > 0.03 )
++			return; // still playing
++
 +		uint8_t pattern[15] = { 0 };
-+		int bits = bound( 1, (int)( ms * 120 / 1000 ), 120 );
-+		float duty = Q_max( val1, val2 ) / 65535.0f;
++		int bits = bound( 12, (int)( ms * 120 / 1000 ), 120 );
++		int on = bound( 3, (int)( 3.0f + strength * 8.0f ), 8 );
 +
 +		for( int i = 0; i < bits; i++ )
 +		{
-+			if((int)(( i + 1 ) * duty ) > (int)( i * duty ))
++			if(( i & 7 ) < on )
 +				pattern[i >> 3] |= 0x80 >> ( i & 7 );
 +		}
 +
-+		if( duty > 0.0f )
-+			VPADControlMotor( VPAD_CHAN_0, pattern, bits );
-+		else
-+			VPADStopMotor( VPAD_CHAN_0 );
++		int32_t ret = VPADControlMotor( VPAD_CHAN_0, pattern, bits );
++		motor_end = now + bits / 120.0;
++
++		// rumble can't be checked in Cemu: the log says whether the console took it
++		if( motor_log < 4 || ( ret < 0 && motor_log < 12 ))
++		{
++			motor_log++;
++			Con_Printf( "GamePad rumble: %d steps, %d of 8 on, VPADControlMotor returned %d\n", bits, on, ret );
++		}
 +	}
 +#else
  	SDL_GameControllerRumble( gc, val1, val2, ms );
@@ -1119,6 +1169,101 @@ index e85afd2..14b4505 100644
  		if( SDL_GL_LoadLibrary( EGL_LIB ) < 0 )
  		{
  			Con_Reportf( S_ERROR  "Couldn't initialize OpenGL: %s\n", SDL_GetError());
+diff --git a/engine/server/sv_save.c b/engine/server/sv_save.c
+index 54975d6..d6f4c21 100644
+--- a/engine/server/sv_save.c
++++ b/engine/server/sv_save.c
+@@ -2286,6 +2286,24 @@ SV_GetSaveComment
+ check savegame for valid
+ ==================
+ */
++#if XASH_WIIU
++// The game code stores its save fields little-endian (hlsdk-portable's CSave::BufferData), the engine's
++// own header ints are in host order. Read a field's short, and look up a token without trusting it.
++static short SV_SaveFieldShort( const char *p )
++{
++	short v;
++	memcpy( &v, p, sizeof( v ));
++	return LittleShort( v );
++}
++
++static const char *SV_SaveToken( char **pTokenList, int tokenCount, int index )
++{
++	if( !pTokenList || index < 0 || index >= tokenCount || !pTokenList[index] )
++		return "";
++	return pTokenList[index];
++}
++#endif
++
+ int GAME_EXPORT SV_GetSaveComment( const char *savename, char *comment )
+ {
+ 	int	i, tag, size, nNumberOfFields, nFieldSize, tokenSize, tokenCount;
+@@ -2303,6 +2321,15 @@ int GAME_EXPORT SV_GetSaveComment( const char *savename, char *comment )
+ 	FS_Read( f, &tag, sizeof( int ));
+ 	if( tag != SAVEGAME_HEADER )
+ 	{
++#if XASH_WIIU
++		// the engine writes its header in host order: a little-endian header is a save from a PC
++		if( (int)LittleLong( tag ) == SAVEGAME_HEADER )
++		{
++			Q_strncpy( comment, "<PC save, can't be loaded>", MAX_STRING );
++			FS_Close( f );
++			return 0;
++		}
++#endif
+ 		// invalid header
+ 		Q_strncpy( comment, "<corrupted>", MAX_STRING );
+ 		FS_Close( f );
+@@ -2375,9 +2402,15 @@ int GAME_EXPORT SV_GetSaveComment( const char *savename, char *comment )
+ 	else pTokenList = NULL;
+ 
+ 	// short, short (size, index of field name)
++#if XASH_WIIU
++	nFieldSize = SV_SaveFieldShort( pData );
++	pData += sizeof( short );
++	pFieldName = (char *)SV_SaveToken( pTokenList, tokenCount, SV_SaveFieldShort( pData ));
++#else
+ 	nFieldSize = *(short *)pData;
+ 	pData += sizeof( short );
+ 	pFieldName = pTokenList[*(short *)pData];
++#endif
+ 
+ 	if( Q_stricmp( pFieldName, "GameHeader" ))
+ 	{
+@@ -2393,6 +2426,10 @@ int GAME_EXPORT SV_GetSaveComment( const char *savename, char *comment )
+ 	nNumberOfFields = (int)*pData;
+ 	pData += nFieldSize;
+ 
++#if XASH_WIIU
++	const char *pDataEnd = pSaveData + size;
++#endif
++
+ 	// each field is a short (size), short (index of name), binary string of "size" bytes (data)
+ 	for( i = 0; i < nNumberOfFields; i++ )
+ 	{
+@@ -2401,11 +2438,22 @@ int GAME_EXPORT SV_GetSaveComment( const char *savename, char *comment )
+ 		// Size
+ 		// szName
+ 		// Actual Data
++#if XASH_WIIU
++		nFieldSize = SV_SaveFieldShort( pData );
++		pData += sizeof( short );
++
++		pFieldName = (char *)SV_SaveToken( pTokenList, tokenCount, SV_SaveFieldShort( pData ));
++		pData += sizeof( short );
++
++		if( nFieldSize < 0 || pData + nFieldSize > pDataEnd )
++			break; // corrupted, don't read past the buffer
++#else
+ 		nFieldSize = *(short *)pData;
+ 		pData += sizeof( short );
+ 
+ 		pFieldName = pTokenList[*(short *)pData];
+ 		pData += sizeof( short );
++#endif
+ 
+ 		size = Q_min( nFieldSize, MAX_STRING );
+ 
 diff --git a/filesystem/dir.c b/filesystem/dir.c
 index 64ac45c..0b7aae3 100644
 --- a/filesystem/dir.c

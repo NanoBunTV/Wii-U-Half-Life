@@ -110,6 +110,14 @@ recompiler. Scripted test: `scripts/gxtest.cfg` (copy it to `valve/` on the SD c
 decal wall is straight ahead at the c2a3 start. The interpreter needs about 3 minutes to get there. The
 same line works on hardware, and `+map c4a1` shakes the ground right away (rumble).
 
+### Cemu and reading GPU results on the CPU
+
+Cemu keeps textures on the host GPU and only writes them back to emulated memory in a few cases. A
+`GX2CopySurface` to a `LINEAR_ALIGNED` surface left the memory untouched (black save pictures); copying to
+`GX2_TILE_MODE_LINEAR_SPECIAL` is read back at once (`LatteSurfaceCopy.cpp`). Test screenshots with
+`+exec gxtest.cfg +map c2a5 +w100 +w100 +w100 +screenshot` (→ `valve/scrshots/`) or `+save name`
+(→ `valve/SAVE/name.bmp`). Rumble can't be felt in Cemu; the engine logs what `VPADControlMotor` returned.
+
 ### SDL Wii U renderer quirks (found 2026-10-13)
 
 The software renderer's frame goes through SDL's GX2 renderer (`vid_sdl2.c`, `SW_*` functions, Wii U
@@ -143,7 +151,10 @@ Window captures (`capture-cemu.ps1`) of the Vulkan window are reliable; the froz
     ```
     F:\Programs\devkitPro\devkitPPC\bin\powerpc-eabi-addr2line.exe -f -C -e build\halflife.elf 020b8930 020b8a10 020c1234
     ```
-    `.text` starts at `0x02000000` in both the ELF and the loaded RPX, so the addresses match directly.
+    In Cemu `.text` is loaded at `0x02000000`, like in the ELF, so Cemu addresses match directly. On the
+    owner's console (Aroma) it's loaded `0x0A000000` higher: subtract that first, e.g. a hardware
+    `pc 0c46a810` is `0246a810` in the ELF. If the result decodes to nonsense, the load address changed;
+    check that pc and lr land in functions that call each other.
 - **Hangs:** put `-watchdog 10` in `sd:/wiiu/apps/halflife/cmdline.txt`. Every 10 s the watchdog suspends the engine
   thread and logs its PC, LR and stack, which you decode the same way. Under Cemu the values are garbage
   (Cemu doesn't keep the saved thread context up to date), so this only helps on hardware.

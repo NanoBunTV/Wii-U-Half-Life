@@ -161,6 +161,7 @@ static struct
 	int tex2d[GX2GL_UNITS];
 	texenv_t env[GX2GL_UNITS];
 	int unpackAlignment;
+	int packAlignment;
 	GLuint nextTexture;
 
 	// fixed-function state
@@ -1194,9 +1195,9 @@ static void glGetIntegerv_( GLenum pname, GLint *params )
 
 static void glGetBooleanv_( GLenum pname, GLboolean *params )
 {
-	GLint v = 0;
-	glGetIntegerv_( pname, &v );
-	params[0] = v ? GL_TRUE : GL_FALSE;
+	GLint v[4] = { 0 }; // GL_VIEWPORT writes 4
+	glGetIntegerv_( pname, v );
+	params[0] = v[0] ? GL_TRUE : GL_FALSE;
 }
 
 static void glGetDoublev_( GLenum pname, GLdouble *params )
@@ -1841,8 +1842,13 @@ static void glTexSubImage2D_( GLenum target, GLint level, GLint xoffset, GLint y
 
 static void glPixelStorei_( GLenum pname, GLint param )
 {
-	if( pname == GL_UNPACK_ALIGNMENT && ( param == 1 || param == 2 || param == 4 || param == 8 ))
+	if( param != 1 && param != 2 && param != 4 && param != 8 )
+		return;
+
+	if( pname == GL_UNPACK_ALIGNMENT )
 		g.unpackAlignment = param;
+	else if( pname == GL_PACK_ALIGNMENT )
+		g.packAlignment = param;
 }
 
 static void glPixelStoref_( GLenum pname, GLfloat param ) { glPixelStorei_( pname, (GLint)param ); }
@@ -1890,12 +1896,65 @@ static void glFogfv_( GLenum pname, const GLfloat *params )
 	}
 }
 
+// screenshots, save game pictures and envshot: the colour buffer is tiled, so the GPU copies it to a
+// linear surface first, and the CPU waits for that (a full GPU stall, fine for these). Only GL_RGB / GL_RGBA with GL_UNSIGNED_BYTE
 static void glReadPixels_( GLint x, GLint y, GLsizei w, GLsizei h, GLenum format, GLenum type, GLvoid *pixels )
 {
-	(void)x; (void)y; (void)type;
-	// not supported yet: screenshots come out black
-	if( pixels && w > 0 && h > 0 )
-		memset( pixels, 0, (size_t)w * h * GX2GL_FormatBytes( format ));
+	GX2Surface linear;
+	int bpp = format == GL_RGB ? 3 : format == GL_RGBA ? 4 : 0;
+	int pitch;
+
+	if( !pixels || w <= 0 || h <= 0 || !bpp || type != GL_UNSIGNED_BYTE )
+		return;
+
+	pitch = ( w * bpp + g.packAlignment - 1 ) & ~( g.packAlignment - 1 );
+	memset( pixels, 0, (size_t)pitch * h );
+
+	if( !GX2GL_Active( ))
+		return;
+
+	GX2GL_Flush();
+
+	// LINEAR_SPECIAL is the tile mode games copy to for CPU reads (thumbnails); Cemu only writes the
+	// pixels back to memory for this mode (LatteSurfaceCopy), the image stays black with LINEAR_ALIGNED
+	GX2GL_InitSurface( &linear, g.width, g.height, 1, GX2_TILE_MODE_LINEAR_SPECIAL );
+	linear.image = GX2GL_Alloc( linear.alignment, linear.imageSize );
+	if( !linear.image )
+		return;
+
+	if( g.stateLost )
+	{
+		GX2SetContextState( g.ctx );
+		g.stateLost = 0;
+	}
+
+	GX2CopySurface( &g.cb.surface, 0, 0, &linear, 0, 0 );
+	GX2DrawDone();
+	GX2Invalidate( GX2_INVALIDATE_MODE_CPU, linear.image, linear.imageSize );
+	g.stateLost = 1; // the copy changes GPU state
+
+	// GL rows go bottom up, GX2 rows top down
+	for( int row = 0; row < h; row++ )
+	{
+		int srcY = g.height - 1 - ( y + row );
+		uint8_t *dst = (uint8_t *)pixels + (size_t)row * pitch;
+		const uint8_t *src;
+
+		if( srcY < 0 || srcY >= g.height )
+			continue;
+
+		src = (const uint8_t *)linear.image + ( (size_t)srcY * linear.pitch + x ) * 4;
+
+		for( int col = 0; col < w; col++ )
+		{
+			if( x + col < 0 || x + col >= g.width )
+				continue;
+
+			memcpy( dst + col * bpp, src + col * 4, bpp );
+		}
+	}
+
+	free( linear.image );
 }
 
 // accepted but not supported
@@ -2035,6 +2094,7 @@ static void GX2GL_SetDefaultState( void )
 		g.env[unit].rgbScale = 1.0f;
 	}
 	g.unpackAlignment = 4;
+	g.packAlignment = 4;
 	g.nextTexture = 1;
 	g.blendSrc = GL_ONE;
 	g.blendDst = GL_ZERO;

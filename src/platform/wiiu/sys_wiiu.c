@@ -30,6 +30,10 @@ GNU General Public License for more details.
 #include <whb/log.h>
 #include <whb/log_cafe.h>
 #include <whb/log_udp.h>
+#include <whb/log_console.h>
+#include <whb/proc.h>
+#include <vpad/input.h>
+#include <sysapp/launch.h>
 
 #include "platform/platform.h"
 
@@ -113,6 +117,68 @@ static void WiiU_InitLogging( void )
 
 /*
 ==================
+WiiU_CheckGameData
+
+Without the game files the engine can only stop with an error, and SDL has no message box on Wii U,
+so the app would just close. Check before anything else starts and explain on screen instead (OSScreen
+text through WHB's console, which handles the HOME menu). Runs on the RPX main thread, before SDL
+sets up ProcUI and GX2. Never returns when the files are missing.
+==================
+*/
+static void WiiU_CheckGameData( void )
+{
+	static const char *const lines[] =
+	{
+		"Half-Life: game files not found",
+		"",
+		"Copy the \"valve\" folder from your Steam copy of Half-Life",
+		"(Steam\\steamapps\\common\\Half-Life\\valve, about 600 MB)",
+		"to this folder on the SD card:",
+		"",
+		"    sd:/wiiu/apps/halflife/valve",
+		"",
+		"Press A to return to the Wii U Menu.",
+	};
+	struct stat st;
+	qboolean quitting = false;
+
+	if( stat( WIIU_BASEDIR "/valve", &st ) == 0 && S_ISDIR( st.st_mode ))
+		return;
+
+	printf( "Can't find %s/valve, showing the missing game files screen\n", WIIU_BASEDIR );
+
+	WHBProcInit( );
+	WHBLogConsoleInit( );
+	WHBLogConsoleSetColor( 0x20202000 );
+
+	for( size_t i = 0; i < ARRAYSIZE( lines ); i++ )
+		WHBLogPrint( lines[i] );
+
+	while( WHBProcIsRunning( ))
+	{
+		VPADStatus vpad;
+		VPADReadError err;
+
+		if( !quitting && VPADRead( VPAD_CHAN_0, &vpad, 1, &err ) > 0 && err == VPAD_READ_SUCCESS
+			&& ( vpad.trigger & ( VPAD_BUTTON_A | VPAD_BUTTON_B | VPAD_BUTTON_PLUS )))
+		{
+			// leaving on our own: ask for the menu, ProcUI then ends the loop
+			quitting = true;
+			SYSLaunchMenu( );
+		}
+
+		WHBLogConsoleDraw( );
+		OSSleepTicks( OSMillisecondsToTicks( 16 ));
+	}
+
+	WHBLogConsoleFree( );
+	WHBProcShutdown( );
+	WiiU_Shutdown( );
+	exit( 0 );
+}
+
+/*
+==================
 WiiU_GetArgv
 
 Called first thing from main(). Sets up logging and appends the arguments from
@@ -164,6 +230,8 @@ int WiiU_GetArgv( int in_argc, char **in_argv, char ***out_argv )
 	setenv( "XASH3D_RODIR", WIIU_CONTENTDIR, 0 );
 
 	printf( "Half-Life Wii U: %d argument(s), base directory %s\n", argc, WIIU_BASEDIR );
+
+	WiiU_CheckGameData( );
 
 	return argc;
 }
