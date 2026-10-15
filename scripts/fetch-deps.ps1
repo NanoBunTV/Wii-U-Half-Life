@@ -1,6 +1,7 @@
 <#
 .SYNOPSIS
-  Downloads Xash3D FWGS and hlsdk-portable into external/ at the pinned commits and applies the
+  Downloads Xash3D FWGS and hlsdk-portable (master for Half-Life, the bshift and opfor branches for
+  Blue Shift and Opposing Force) into external/ at the pinned commits and applies the
   Wii U patches from patches/.
 
 .DESCRIPTION
@@ -24,7 +25,9 @@ $repos = @(
 	@{ Dir = 'xash3d-fwgs/3rdparty/library_suffix'; Url = $null;                                        Commit = $null;                                       Patch = 'library_suffix.patch' },
 	@{ Dir = 'xash3d-fwgs/3rdparty/mainui';         Url = $null;                                        Commit = $null;                                       Patch = 'mainui.patch' },
 	@{ Dir = 'hlsdk-portable';                      Url = 'https://github.com/FWGS/hlsdk-portable.git'; Commit = '6c168fc79d95c8ffb934fa37aaafbbd424e03c1a'; Patch = 'hlsdk-portable.patch' },
-	@{ Dir = 'hlsdk-portable/freevgui';             Url = $null;                                        Commit = $null;                                       Patch = 'freevgui.patch' }
+	@{ Dir = 'hlsdk-portable/freevgui';             Url = $null;                                        Commit = $null;                                       Patch = 'freevgui.patch' },
+	@{ Dir = 'hlsdk-bshift';                        Url = 'https://github.com/FWGS/hlsdk-portable.git'; Commit = '701bcef1a0ebac49e93ecff9e2c7724ff0b4278d'; Patch = 'hlsdk-bshift.patch' },
+	@{ Dir = 'hlsdk-opfor';                         Url = 'https://github.com/FWGS/hlsdk-portable.git'; Commit = '109b4821281c0e62e20fa23b96589fca2ec78ca0'; Patch = 'hlsdk-opfor.patch' }
 )
 
 function Invoke-Git { & git.exe @args; if ($LASTEXITCODE -ne 0) { throw "git $args failed" } }

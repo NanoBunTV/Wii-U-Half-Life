@@ -20,7 +20,9 @@ $repos = @(
 	@{ Dir = 'xash3d-fwgs/3rdparty/library_suffix'; Patch = 'library_suffix.patch' },
 	@{ Dir = 'xash3d-fwgs/3rdparty/mainui';         Patch = 'mainui.patch' },
 	@{ Dir = 'hlsdk-portable';                      Patch = 'hlsdk-portable.patch' },
-	@{ Dir = 'hlsdk-portable/freevgui';             Patch = 'freevgui.patch' }
+	@{ Dir = 'hlsdk-portable/freevgui';             Patch = 'freevgui.patch' },
+	@{ Dir = 'hlsdk-bshift';                        Patch = 'hlsdk-bshift.patch' },
+	@{ Dir = 'hlsdk-opfor';                         Patch = 'hlsdk-opfor.patch' }
 )
 
 foreach ($r in $repos) {

@@ -39,6 +39,7 @@ reimplementations.
 | Hide each library's symbols (`ld -r` + `objcopy -G` + strip COMDAT groups) | Client and server share the weapon and player-movement code; every renderer defines `GetRefAPI`. The [Wii port](https://github.com/MintFerret/xash3d-fwgs) renamed clashing symbols by hand, which is fragile across engine updates |
 | Engine source not vendored: `external/` + `patches/` | Keeps the repository small and makes it obvious which lines are the port's. `scripts/fetch-deps.ps1` pins exact upstream commits |
 | Game files at `sd:/wiiu/apps/halflife/valve` | Next to `halflife.wuhb`, owner's decision (2026-10-14). Was `sd:/halflife/valve` before, to keep game files out of the folder the Aroma launcher scans for apps; it only looks for `.wuhb`/`.rpx` files, so a data folder there is fine |
+| One `.wuhb` per game (Half-Life, Blue Shift, Opposing Force), same program | Owner's choice (2026-10-14) over a picker or in-menu switching: each game has its own Wii U Menu icon, and the engine can't restart into another game on Wii U |
 | Engine extras (`extras.pk3`) inside the `.wuhb` | Users copy only the Steam `valve` folder. The `.wuhb` content folder is mounted as the engine's read-only root |
 | Software renderer (`ref_soft`) first, GX2 renderer later | `ref_soft` needs no GPU work, so the rest of the port could be tested first. Done 2026-10-14: `ref_gl` on gx2gl is the default renderer, `ref_soft` the fallback (`-ref soft`) |
 | IPv6 disabled | The Wii U network stack (nsysnet) is IPv4 only |

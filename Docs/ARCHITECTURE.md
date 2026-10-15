@@ -8,14 +8,14 @@
 | `cmake/XashStaticLib.cmake` | `xash_static_library()`: turns an object library into one relocatable `.o` with a hidden symbol table (see below). `xash_write_library_tables()` writes `generated_library_tables.h` |
 | `cmake/xash_link_relocatable.cmake` | The script that function runs at build time (`ld -r`, `link_helper.c` generation, `objcopy`) |
 | `cmake/ThirdParty.cmake` | Static libraries from `xash3d-fwgs/3rdparty` (bzip2, mpg123, ogg, vorbis, opus, opusfile, miniz, MultiEmulator, library_suffix) and `public/` |
-| `cmake/HLSDK.cmake` | hlsdk-portable server and client (+ FreeVGUI). Source lists are read from hlsdk-portable's own CMakeLists |
+| `cmake/HLSDK.cmake` | `hlsdk_game()`: server and client of one hlsdk-portable checkout (+ FreeVGUI); called for Half-Life (`server`/`client`), Blue Shift (`*_bshift`) and Opposing Force (`*_opfor`). Source lists are read from each checkout's own CMakeLists |
 | `exports/*.txt` | Export lists for the engine's own libraries (filesystem, renderer, menu) |
 | `src/platform/wiiu/` | Wii U platform layer: `sys_wiiu.c` (startup, paths, logging, crash handler, watchdog), `net_wiiu.h` (socket compatibility) |
 | `src/gx2gl/` | OpenGL 1.x subset on GX2 for `ref_gl` (see "Hardware rendering" below); `shaders/` holds the GPU assembly and the generated header |
 | `tools/` | Downloaded build tools, not in git (`latte-assembler`, see BUILDING.md) |
 | `meta/` | `.wuhb` icon and splash screens; `meta/art/make_art.ps1` regenerates them |
 | `patches/` | The port's changes to the upstream sources (see BUILDING.md) |
-| `external/` | Upstream sources, not in git: `xash3d-fwgs/`, `hlsdk-portable/` (fetched by `scripts/fetch-deps.ps1`) |
+| `external/` | Upstream sources, not in git: `xash3d-fwgs/`, `hlsdk-portable/`, `hlsdk-bshift/`, `hlsdk-opfor/` (fetched by `scripts/fetch-deps.ps1`) |
 | `scripts/` | Helper scripts (fetching, patches, Cemu) |
 
 ## One executable instead of shared libraries
@@ -134,7 +134,7 @@ Engine changes for the port are guarded by `#if XASH_WIIU`. They include:
   a pattern lasts at least 1/10 s, and a new one is only sent when the current one is nearly over (Cemu
   queues up to 5 patterns, so sending every frame would only pile up). The first two versions switched
   the motor every step and sent a new pattern every frame during `env_shake`, and nothing was felt on
-  hardware. The first calls and any error are logged ("GamePad rumble: … VPADControlMotor returned …");
+  hardware; this version works there (owner, 2026-10-14). The first calls and any error are logged ("GamePad rumble: … VPADControlMotor returned …");
   `vibrate <ms>` in the console tests it;
 - a screen explaining where to copy the game files when `sd:/wiiu/apps/halflife/valve` is missing
   (`WiiU_CheckGameData` in `sys_wiiu.c`, OSScreen text through WHB's console, before SDL starts). SDL has no
@@ -147,10 +147,21 @@ Engine changes for the port are guarded by `#if XASH_WIIU`. They include:
 - the console's keyboard opens when the console is opened (`Con_ToggleConsole_f`) or with Y, not whenever
   the console gets focus (`Key_SetKeyDest`, as on Switch and Vita): it used to pop up while loading a save;
 - `hud_fastswitch` defaults to 1 (`cl_dll/ammo.cpp`, hlsdk-portable patch);
+- `hud_fontscale` defaults to 2 (`cl_main.c`): titles, credits and `game_text` were sized for 480 lines and
+  were small at 720p on a TV;
+- `wiiu_config_version` (`Host_WiiUUpgradeConfig`, `host.c`): `config.cfg` saves every archived cvar,
+  defaults included, so changed Wii U defaults never reached existing installs. After `config.cfg`, each
+  step newer than the saved version is applied once (1: `hud_fastswitch 1`, `hud_fontscale 2`). Add a
+  step whenever a Wii U default changes;
 - `snd_gain` (default 1.5, saved): final audio output gain before clipping (`s_mix.c`), because the
   GamePad's speakers were quiet at the PC level. SDL's Wii U audio already mixes at unity (`0x8000`);
 - big-endian fixes in `img_wad.c` (palette entry 255's alpha, `Image_FindBestBlack`);
-- menu entries that make no sense on a console hidden in mainui (`mainui.patch`).
+- menu entries that make no sense on a console hidden in mainui (`mainui.patch`): Multiplayer, Change
+  game, Previews, window buttons, video modes, touch, mouse options, "Use VBO", "Mute when inactive",
+  the built-in on-screen keyboard option. Console is always shown (developer mode not needed). The
+  Controls list (`KbActListModel.h`) leaves out chat, voice, mouse/keyboard look and strafe modifiers,
+  scores, spray, quit and Opposing Force's Capture the Flag actions, shows only GamePad buttons, and
+  "Use defaults" restores the GamePad layout instead of loading the PC keyboard defaults.
 
 The full list is in `patches/xash3d-fwgs.patch`.
 
@@ -158,12 +169,27 @@ The full list is in `patches/xash3d-fwgs.patch`.
 
 ```
 sd:/wiiu/apps/halflife.wuhb          the app (contains valve/extras.pk3 in its content folder)
+sd:/wiiu/apps/bshift.wuhb            the same app for Blue Shift (content folder adds game.txt = "bshift")
+sd:/wiiu/apps/opfor.wuhb             the same app for Opposing Force (game.txt = "gearbox")
 sd:/wiiu/apps/halflife/valve/        the user's own game files from Steam
+sd:/wiiu/apps/halflife/bshift/       Blue Shift's files (only for bshift.wuhb)
+sd:/wiiu/apps/halflife/gearbox/      Opposing Force's files (only for opfor.wuhb)
 sd:/wiiu/apps/halflife/cmdline.txt   optional extra engine arguments, e.g. "-dev 2 -console"
 sd:/wiiu/apps/halflife/engine.log    written with -log
 ```
 
-The engine writes `config.cfg`, saves (`valve/SAVE/`) and logs inside `sd:/wiiu/apps/halflife/valve/`.
+The engine writes `config.cfg`, saves (`valve/SAVE/`) and logs inside `sd:/wiiu/apps/halflife/valve/` (the
+expansions in their own folder).
+
+### Blue Shift and Opposing Force
+
+All three games' code is linked into the one program: hlsdk-portable's master, `bshift` and `opfor`
+branches each become a server and client static library (`cmake/HLSDK.cmake`, `hlsdk_game()`), and the
+engine appends `_bshift` / `_opfor` to the library names for the `bshift` / `gearbox` game folders
+(`COM_WiiUGameLibrarySuffix`, `lib_common.c`). The engine can't restart into another game on Wii U, so
+each game is its own `.wuhb` (owner's choice, 2026-10-14): `CMakeLists.txt` (`game_wuhb()`) packs the same
+`.rpx` with a content folder holding `game.txt`, which `sys_wiiu.c` turns into `-game <folder>` unless
+`cmdline.txt` has a `-game`. The missing-files screen then also checks that game's folder.
 
 ## Hardware rendering: ref_gl on gx2gl
 

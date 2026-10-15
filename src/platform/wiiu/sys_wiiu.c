@@ -49,6 +49,7 @@ GNU General Public License for more details.
 
 static char *wiiu_argv[WIIU_MAX_ARGS + 1];
 static char wiiu_cmdline[1024];
+static char wiiu_gamedir[64];
 static qboolean wiiu_log_ready;
 
 /*
@@ -119,40 +120,61 @@ static void WiiU_InitLogging( void )
 ==================
 WiiU_CheckGameData
 
-Without the game files the engine can only stop with an error, and SDL has no message box on Wii U,
-so the app would just close. Check before anything else starts and explain on screen instead (OSScreen
+Without the game files (valve, plus the game's own folder for Blue Shift and Opposing Force) the
+engine can only stop with an error, and SDL has no message box on Wii U, so the app would just close. Check before anything else starts and explain on screen instead (OSScreen
 text through WHB's console, which handles the HOME menu). Runs on the RPX main thread, before SDL
 sets up ProcUI and GX2. Never returns when the files are missing.
 ==================
 */
-static void WiiU_CheckGameData( void )
+static qboolean WiiU_IsDir( const char *path )
 {
-	static const char *const lines[] =
-	{
-		"Half-Life: game files not found",
-		"",
-		"Copy the \"valve\" folder from your Steam copy of Half-Life",
-		"(Steam\\steamapps\\common\\Half-Life\\valve, about 600 MB)",
-		"to this folder on the SD card:",
-		"",
-		"    sd:/wiiu/apps/halflife/valve",
-		"",
-		"Press A to return to the Wii U Menu.",
-	};
 	struct stat st;
+
+	return stat( path, &st ) == 0 && S_ISDIR( st.st_mode );
+}
+
+static void WiiU_CheckGameData( const char *gamedir )
+{
+	char path[256], line[128];
+	const char *missing = NULL;
 	qboolean quitting = false;
 
-	if( stat( WIIU_BASEDIR "/valve", &st ) == 0 && S_ISDIR( st.st_mode ))
+	// every game runs on top of Half-Life's files
+	if( !WiiU_IsDir( WIIU_BASEDIR "/valve" ))
+		missing = "valve";
+	else if( Q_stricmp( gamedir, "valve" ))
+	{
+		Q_snprintf( path, sizeof( path ), "%s/%s", WIIU_BASEDIR, gamedir );
+		if( !WiiU_IsDir( path ))
+			missing = gamedir;
+	}
+
+	if( !missing )
 		return;
 
-	printf( "Can't find %s/valve, showing the missing game files screen\n", WIIU_BASEDIR );
+	printf( "Can't find %s/%s, showing the missing game files screen\n", WIIU_BASEDIR, missing );
 
 	WHBProcInit( );
 	WHBLogConsoleInit( );
 	WHBLogConsoleSetColor( 0x20202000 );
 
-	for( size_t i = 0; i < ARRAYSIZE( lines ); i++ )
-		WHBLogPrint( lines[i] );
+	WHBLogPrint( "Game files not found" );
+	WHBLogPrint( "" );
+	Q_snprintf( line, sizeof( line ), "Copy the \"%s\" folder from your Steam copy of Half-Life", missing );
+	WHBLogPrint( line );
+	Q_snprintf( line, sizeof( line ), "(Steam\\steamapps\\common\\Half-Life\\%s)", missing );
+	WHBLogPrint( line );
+	WHBLogPrint( "to this folder on the SD card:" );
+	WHBLogPrint( "" );
+	Q_snprintf( line, sizeof( line ), "    sd:/wiiu/apps/halflife/%s", missing );
+	WHBLogPrint( line );
+	WHBLogPrint( "" );
+	if( Q_stricmp( missing, "valve" ))
+	{
+		WHBLogPrint( "This game also needs Half-Life's \"valve\" folder there." );
+		WHBLogPrint( "" );
+	}
+	WHBLogPrint( "Press A to return to the Wii U Menu." );
 
 	while( WHBProcIsRunning( ))
 	{
@@ -222,6 +244,43 @@ int WiiU_GetArgv( int in_argc, char **in_argv, char ***out_argv )
 		}
 	}
 
+	// Blue Shift / Opposing Force: their .wuhb has game.txt with the game folder (CMakeLists.txt,
+	// game_wuhb). A -game in cmdline.txt wins
+	for( int i = 1; i < argc; i++ )
+	{
+		if( !Q_stricmp( wiiu_argv[i], "-game" ) && i + 1 < argc )
+			Q_strncpy( wiiu_gamedir, wiiu_argv[i + 1], sizeof( wiiu_gamedir ));
+	}
+
+	if( !wiiu_gamedir[0] )
+	{
+		f = fopen( WIIU_CONTENTDIR "/game.txt", "r" );
+		if( f )
+		{
+			size_t len = fread( wiiu_gamedir, 1, sizeof( wiiu_gamedir ) - 1, f );
+
+			fclose( f );
+			wiiu_gamedir[len] = 0;
+			for( char *p = wiiu_gamedir; *p; p++ )
+			{
+				if( *p == ' ' || *p == '\t' || *p == '\r' || *p == '\n' )
+				{
+					*p = 0;
+					break;
+				}
+			}
+
+			if( wiiu_gamedir[0] && argc + 2 <= WIIU_MAX_ARGS )
+			{
+				wiiu_argv[argc++] = (char *)"-game";
+				wiiu_argv[argc++] = wiiu_gamedir;
+			}
+		}
+	}
+
+	if( !wiiu_gamedir[0] )
+		Q_strncpy( wiiu_gamedir, "valve", sizeof( wiiu_gamedir ));
+
 	wiiu_argv[argc] = NULL;
 	*out_argv = wiiu_argv;
 
@@ -229,9 +288,9 @@ int WiiU_GetArgv( int in_argc, char **in_argv, char ***out_argv )
 	// game folders as the engine's read-only root
 	setenv( "XASH3D_RODIR", WIIU_CONTENTDIR, 0 );
 
-	printf( "Half-Life Wii U: %d argument(s), base directory %s\n", argc, WIIU_BASEDIR );
+	printf( "Half-Life Wii U: %d argument(s), base directory %s, game %s\n", argc, WIIU_BASEDIR, wiiu_gamedir );
 
-	WiiU_CheckGameData( );
+	WiiU_CheckGameData( wiiu_gamedir );
 
 	return argc;
 }

@@ -18,8 +18,11 @@ set(APP_VERSION     "0.1.0")
 
 set(XASH_DIR  "${CMAKE_SOURCE_DIR}/external/xash3d-fwgs"  CACHE PATH "Xash3D FWGS source")
 set(HLSDK_DIR "${CMAKE_SOURCE_DIR}/external/hlsdk-portable" CACHE PATH "hlsdk-portable source")
+set(HLSDK_BSHIFT_DIR "${CMAKE_SOURCE_DIR}/external/hlsdk-bshift" CACHE PATH "hlsdk-portable, bshift branch (Blue Shift)")
+set(HLSDK_OPFOR_DIR  "${CMAKE_SOURCE_DIR}/external/hlsdk-opfor"  CACHE PATH "hlsdk-portable, opfor branch (Opposing Force)")
 
-if(NOT EXISTS "${XASH_DIR}/engine/common/host.c" OR NOT EXISTS "${HLSDK_DIR}/dlls/cbase.cpp")
+if(NOT EXISTS "${XASH_DIR}/engine/common/host.c" OR NOT EXISTS "${HLSDK_DIR}/dlls/cbase.cpp"
+	OR NOT EXISTS "${HLSDK_BSHIFT_DIR}/dlls/cbase.cpp" OR NOT EXISTS "${HLSDK_OPFOR_DIR}/dlls/cbase.cpp")
 	message(FATAL_ERROR "Engine / game sources missing. Run scripts/fetch-deps.ps1 first.")
 endif()
 
@@ -126,8 +129,11 @@ xash_static_library(menu OBJLIBS menu_obj EXPORTS_FILE "${CMAKE_SOURCE_DIR}/expo
 # ---------------------------------------------------------------------------------------------------
 # game code
 # ---------------------------------------------------------------------------------------------------
-xash_static_library(server OBJLIBS server_obj hlsdk_vcs_info EXPORTS_FROM_OBJECTS)
-xash_static_library(client OBJLIBS client_obj vgui_obj hlsdk_vcs_info EXPORTS_FROM_OBJECTS)
+# Half-Life ("client" / "server"), Blue Shift and Opposing Force, all linked in; the engine picks by game
+# folder (COM_WiiUGameLibrarySuffix in lib_common.c)
+hlsdk_game("" "${HLSDK_DIR}")
+hlsdk_game("_bshift" "${HLSDK_BSHIFT_DIR}")
+hlsdk_game("_opfor" "${HLSDK_OPFOR_DIR}")
 
 # ---------------------------------------------------------------------------------------------------
 # engine executable
@@ -211,3 +217,32 @@ wut_create_wuhb(halflife
 	DRCSPLASH "${CMAKE_SOURCE_DIR}/meta/drc-splash.png"
 )
 add_dependencies(halflife wuhb_content)
+
+# Blue Shift and Opposing Force: the same program in its own .wuhb, so each game has its own icon on the
+# Wii U Menu. Their content folder adds game.txt with the game folder; sys_wiiu.c turns it into -game
+function(game_wuhb name gamedir title)
+	set(dir "${CMAKE_BINARY_DIR}/content_${name}")
+	file(MAKE_DIRECTORY "${dir}/valve")
+	file(WRITE "${dir}/game.txt.tmp" "${gamedir}")
+	file(COPY_FILE "${dir}/game.txt.tmp" "${dir}/game.txt" ONLY_IF_DIFFERENT)
+	add_custom_command(
+		OUTPUT "${dir}/valve/extras.pk3"
+		COMMAND "${CMAKE_COMMAND}" -E copy "${CONTENT_DIR}/valve/extras.pk3" "${dir}/valve/extras.pk3"
+		DEPENDS "${CONTENT_DIR}/valve/extras.pk3"
+		VERBATIM)
+	add_custom_target(wuhb_content_${name} DEPENDS "${dir}/valve/extras.pk3")
+	wut_create_wuhb(${name}_wuhb
+		TARGET halflife
+		OUTPUT "${CMAKE_BINARY_DIR}/${name}.wuhb"
+		CONTENT "${dir}"
+		NAME "${title}"
+		SHORTNAME "${title}"
+		AUTHOR "${APP_AUTHOR}"
+		ICON "${CMAKE_SOURCE_DIR}/meta/icon.png"
+		TVSPLASH "${CMAKE_SOURCE_DIR}/meta/tv-splash.png"
+		DRCSPLASH "${CMAKE_SOURCE_DIR}/meta/drc-splash.png"
+	)
+	add_dependencies(${name}_wuhb wuhb_content_${name})
+endfunction()
+game_wuhb(bshift bshift "Half-Life: Blue Shift")
+game_wuhb(opfor gearbox "Half-Life: Opposing Force")

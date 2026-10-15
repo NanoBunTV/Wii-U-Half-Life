@@ -110,6 +110,15 @@ recompiler. Scripted test: `scripts/gxtest.cfg` (copy it to `valve/` on the SD c
 decal wall is straight ahead at the c2a3 start. The interpreter needs about 3 minutes to get there. The
 same line works on hardware, and `+map c4a1` shakes the ground right away (rumble).
 
+### Cemu itself crashing (2026-10-14)
+
+Since Blue Shift and Opposing Force were linked in, Cemu's recompiler sometimes kills Cemu outright: the
+window disappears, `log.txt` just stops, and our crash handler prints nothing (no guest exception). Seen on
+`changelevel` (c0a0 tram, `+map c1a0 +w100 +changelevel c1a0d`), on the Opposing Force main menu (two of
+two runs) and once on the Half-Life menu. Every case ran fine with `--force-interpreter`. Treat such
+crashes as Cemu's unless they also happen with the interpreter or on hardware. `run-shots`-style scripts
+should pick the capture of the Half-Life window (the owner often has other Cemu games open).
+
 ### Cemu and reading GPU results on the CPU
 
 Cemu keeps textures on the host GPU and only writes them back to emulated memory in a few cases. A

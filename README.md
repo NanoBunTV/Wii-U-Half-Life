@@ -18,6 +18,10 @@ Requires the Aroma environment.
    to `sd:/wiiu/apps/halflife/valve`.
 3. Start Half-Life from the Wii U menu. If the game files aren't found, it says so on screen.
 
+**Blue Shift and Opposing Force** (if you own them on Steam) are separate apps: also copy `bshift.wuhb` and/or
+`opfor.wuhb` to `sd:/wiiu/apps/`, and the `bshift` and/or `gearbox` folder from the same Steam folder next to
+`valve` in `sd:/wiiu/apps/halflife/`. Both need the `valve` folder too.
+
 ## Controls (Wii U GamePad)
 
 | Button | Action |
@@ -43,7 +47,9 @@ Configuration → Gamepad.
 
 R / L switch weapons directly (`hud_fastswitch 1`); with `hud_fastswitch 0` they only move the selection
 and ZR confirms. The console (Main menu → Console) opens the GamePad keyboard; press Y to bring it back
-after closing it. Saves copied from a PC can't be loaded and are marked as such in Load Game.
+after closing it. Saves copied from a PC can't be loaded and are marked as such in Load Game. On-screen
+text such as titles and credits is drawn twice the PC size (`hud_fontscale 2`) to be readable on a TV.
+This is a single-player port: there is no multiplayer.
 
 Sound is boosted by default (`snd_gain 1.5`) because the GamePad's speakers are quiet. If loud sounds
 distort, lower it, for example with `+snd_gain 1.2` in `sd:/wiiu/apps/halflife/cmdline.txt`; the value is

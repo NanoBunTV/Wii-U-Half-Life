@@ -23,6 +23,23 @@ index 7cd9c1f..4b18038 100644
  #elif XASH_ANDROID
  	#define DEFAULT_TOUCH_ENABLE "1"
  #elif XASH_MOBILE_PLATFORM
+diff --git a/engine/client/cl_main.c b/engine/client/cl_main.c
+index 39e4f9c..099092b 100644
+--- a/engine/client/cl_main.c
++++ b/engine/client/cl_main.c
+@@ -62,7 +62,12 @@ CVAR_DEFINE_AUTO( cl_nosmooth, "0", 0, "disable smooth up stair climbing" );
+ CVAR_DEFINE_AUTO( cl_smoothtime, "0.1", 0, "time to smooth up" );
+ CVAR_DEFINE_AUTO( cl_clockreset, "0.1", 0, "frametime delta maximum value before reset" );
+ static CVAR_DEFINE_AUTO( cl_fixtimerate, "7.5", 0, "time in msec to client clock adjusting" );
++#if XASH_WIIU
++// HUD text (titles, credits, game_text) was made for 480 lines and is small at 720p, mostly seen on a TV
++CVAR_DEFINE_AUTO( hud_fontscale, "2", FCVAR_ARCHIVE|FCVAR_LATCH, "scale hud font texture" );
++#else
+ CVAR_DEFINE_AUTO( hud_fontscale, "1.0", FCVAR_ARCHIVE|FCVAR_LATCH, "scale hud font texture" );
++#endif
+ CVAR_DEFINE_AUTO( hud_fontrender, "0", FCVAR_ARCHIVE, "hud font render mode (0: additive, 1: holes, 2: trans)" );
+ CVAR_DEFINE_AUTO( hud_scale, "0", FCVAR_ARCHIVE|FCVAR_LATCH, "scale hud at current resolution" );
+ CVAR_DEFINE_AUTO( hud_scale_minimal_width, "640", FCVAR_ARCHIVE|FCVAR_LATCH, "if hud_scale results in a HUD virtual screen smaller than this value, it won't be applied" );
 diff --git a/engine/client/console.c b/engine/client/console.c
 index f4cb680..bdfafee 100644
 --- a/engine/client/console.c
@@ -362,6 +379,71 @@ index 9ed62eb..a7e4e3a 100644
  #elif ( XASH_SDL >= 2 ) && !XASH_NSWITCH // GetBasePath not impl'd in switch-sdl2
  	// SDL2 hands the base path over to us, SDL3 keeps ownership and frees it on quit
  	qboolean owned = XASH_SDL == 2;
+diff --git a/engine/common/host.c b/engine/common/host.c
+index f04c5f9..a02cfe4 100644
+--- a/engine/common/host.c
++++ b/engine/common/host.c
+@@ -995,6 +995,39 @@ static void Host_CheckGameLibraries( void )
+ #endif // XASH_INTERNAL_GAMELIBS
+ }
+ 
++#if XASH_WIIU
++static CVAR_DEFINE_AUTO( wiiu_config_version, "0", FCVAR_ARCHIVE, "Wii U defaults already applied to config.cfg (see Host_WiiUUpgradeConfig)" );
++
++/*
++================
++Host_WiiUUpgradeConfig
++
++config.cfg saves every archived cvar, defaults included, so a default changed in a later version never
++reaches an existing install. Each step here applies the Wii U defaults of one version once; add a step
++whenever a Wii U default changes. Runs after config.cfg, before the command line
++================
++*/
++static void Host_WiiUUpgradeConfig( void )
++{
++	static const char *const steps[] =
++	{
++		// 1: weapons switch directly with L/R, HUD text sized for 720p
++		"hud_fastswitch 1\nhud_fontscale 2\n",
++	};
++	int version = (int)wiiu_config_version.value;
++
++	if( version < 0 || version >= (int)ARRAYSIZE( steps ))
++		return;
++
++	for( ; version < (int)ARRAYSIZE( steps ); version++ )
++		Cbuf_AddText( steps[version] );
++
++	Cbuf_AddTextf( "wiiu_config_version %d\n", version );
++	Cbuf_Execute();
++	Con_Printf( "Applied Wii U default settings (config version %d)\n", version );
++}
++#endif
++
+ /*
+ =================
+ Host_InitCommon
+@@ -1274,6 +1307,9 @@ int EXPORT Host_Main( int argc, char **argv, const char *progname, int bChangeGa
+ 	case HOST_NORMAL:
+ #ifdef _WIN32
+ 		Wcon_ShowConsole( false ); // hide console
++#endif
++#if XASH_WIIU
++		Cvar_RegisterVariable( &wiiu_config_version );
+ #endif
+ 		// execute startup config and cmdline
+ 		if( FS_FileExists( va( "%s.rc", progname ), false )) // e.g. valve.rc
+@@ -1293,6 +1329,10 @@ int EXPORT Host_Main( int argc, char **argv, const char *progname, int bChangeGa
+ 		// exec all files from userconfig.d
+ 		Cbuf_AddText( "userconfigd\n" );
+ 		Cbuf_Execute();
++
++#if XASH_WIIU
++		Host_WiiUUpgradeConfig();
++#endif
+ 		break;
+ 	case HOST_DEDICATED:
+ 		// allways parse commandline in dedicated-mode
 diff --git a/engine/common/imagelib/img_wad.c b/engine/common/imagelib/img_wad.c
 index 7179ca4..6b3810f 100644
 --- a/engine/common/imagelib/img_wad.c
@@ -420,6 +502,67 @@ index 70adc33..1cd85ba 100644
  #elif XASH_IOS
  	IOS_LaunchDialog();
  	szArgc = IOS_GetArgs( &szArgv );
+diff --git a/engine/common/lib_common.c b/engine/common/lib_common.c
+index 665e608..92815ef 100644
+--- a/engine/common/lib_common.c
++++ b/engine/common/lib_common.c
+@@ -199,6 +199,26 @@ static void COM_GenerateServerLibraryPath( const char *alt_dllname, char *out, s
+ }
+ 
+ 
++#if XASH_WIIU
++/*
++==============
++COM_WiiUGameLibrarySuffix
++
++The Wii U build links every game's code into the executable (static libraries "client" / "server" for
++Half-Life, "client_bshift" / "server_bshift" and "client_opfor" / "server_opfor" for the expansions,
++see cmake/HLSDK.cmake). Pick the set by game folder
++==============
++*/
++static const char *COM_WiiUGameLibrarySuffix( void )
++{
++	if( !Q_stricmp( GI->gamefolder, "bshift" ))
++		return "_bshift";
++	if( !Q_stricmp( GI->gamefolder, "gearbox" ))
++		return "_opfor";
++	return "";
++}
++#endif
++
+ /*
+ ==============
+ COM_GetCommonLibraryPath
+@@ -226,7 +246,13 @@ void COM_GetCommonLibraryPath( ECommonLibraryType eLibType, char *out, size_t si
+ 				COM_GenerateClientLibraryPath( host.clientlib + 1, out, size );
+ 			else Q_strncpy( out, host.clientlib, size );
+ 		}
+-		else COM_GenerateClientLibraryPath( "client", out, size );
++		else
++		{
++			COM_GenerateClientLibraryPath( "client", out, size );
++#if XASH_WIIU
++			Q_strncat( out, COM_WiiUGameLibrarySuffix( ), size );
++#endif
++		}
+ 		break;
+ 	case LIBRARY_SERVER:
+ 		if( !COM_StringEmpty( host.gamedll ))
+@@ -235,7 +261,13 @@ void COM_GetCommonLibraryPath( ECommonLibraryType eLibType, char *out, size_t si
+ 				COM_GenerateServerLibraryPath( host.gamedll + 1, out, size );
+ 			else Q_strncpy( out, host.gamedll, size );
+ 		}
+-		else COM_GenerateServerLibraryPath( NULL, out, size );
++		else
++		{
++			COM_GenerateServerLibraryPath( NULL, out, size );
++#if XASH_WIIU
++			Q_strncat( out, COM_WiiUGameLibrarySuffix( ), size );
++#endif
++		}
+ 		break;
+ 	default:
+ 		ASSERT( 0 );
 diff --git a/engine/common/net_ws.c b/engine/common/net_ws.c
 index d139dff..a496b17 100644
 --- a/engine/common/net_ws.c
@@ -606,7 +749,7 @@ index fbcc883..15f9354 100644
  }
  
 diff --git a/engine/platform/sdl2/joy_sdl2.c b/engine/platform/sdl2/joy_sdl2.c
-index 99d45b0..13ea42e 100644
+index 99d45b0..da54c5d 100644
 --- a/engine/platform/sdl2/joy_sdl2.c
 +++ b/engine/platform/sdl2/joy_sdl2.c
 @@ -19,6 +19,9 @@ GNU General Public License for more details.
@@ -897,11 +1040,11 @@ index 99d45b0..13ea42e 100644
 +		int32_t ret = VPADControlMotor( VPAD_CHAN_0, pattern, bits );
 +		motor_end = now + bits / 120.0;
 +
-+		// rumble can't be checked in Cemu: the log says whether the console took it
++		// rumble can't be checked in Cemu: the log says whether the console took it (with -dev 2)
 +		if( motor_log < 4 || ( ret < 0 && motor_log < 12 ))
 +		{
 +			motor_log++;
-+			Con_Printf( "GamePad rumble: %d steps, %d of 8 on, VPADControlMotor returned %d\n", bits, on, ret );
++			Con_Reportf( "GamePad rumble: %d steps, %d of 8 on, VPADControlMotor returned %d\n", bits, on, ret );
 +		}
 +	}
 +#else

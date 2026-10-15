@@ -34,6 +34,28 @@ index 3424ce3..a8f83b2 100644
  }
  
  
+diff --git a/menus/Audio.cpp b/menus/Audio.cpp
+index 152fb47..330a8d4 100644
+--- a/menus/Audio.cpp
++++ b/menus/Audio.cpp
+@@ -18,6 +18,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+ 
+ */
+ 
++#include "build.h"
+ #include "Framework.h"
+ #include "Slider.h"
+ #include "Bitmap.h"
+@@ -166,7 +167,9 @@ void CMenuAudio::_Init( void )
+ 	AddItem( suitVolume );
+ 	AddItem( noDSP );
+ 	AddItem( useAlphaDSP );
++#if !XASH_WIIU // the app is never in the background while playing
+ 	AddItem( muteFocusLost );
++#endif
+ 	AddItem( vibrationEnable );
+ 	AddItem( vibration );
+ }
 diff --git a/menus/Configuration.cpp b/menus/Configuration.cpp
 index 6e0a981..a2d976e 100644
 --- a/menus/Configuration.cpp
@@ -72,8 +94,40 @@ index 6e0a981..a2d976e 100644
  	AddButton( L( "Done" ), L( "Go back to the Main menu" ),
  		PC_DONE, VoidCb( &CMenuOptions::Hide ), QMF_NOTIFY );
  }
+diff --git a/menus/Controls.cpp b/menus/Controls.cpp
+index b4f1aac..58129b3 100644
+--- a/menus/Controls.cpp
++++ b/menus/Controls.cpp
+@@ -111,6 +111,13 @@ void CMenuKeysModel::OnDeleteEntry(int line)
+ 
+ void CMenuControls::ResetKeysList( void )
+ {
++#if XASH_WIIU
++	// kb_def.lst is the PC keyboard layout; unbindall puts the GamePad layout back (in_keys.c)
++	EngFuncs::ClientCmd( true, "unbindall" );
++	keysListModel.Update();
++	return;
++#endif
++
+ 	char *afile = (char *)EngFuncs::COM_LoadFile( "gfx/shell/kb_def.lst", NULL );
+ 	char *pfile = afile;
+ 	char token[1024];
+diff --git a/menus/Gamepad.cpp b/menus/Gamepad.cpp
+index 0ad3289..d4a7d9f 100644
+--- a/menus/Gamepad.cpp
++++ b/menus/Gamepad.cpp
+@@ -237,7 +237,9 @@ void CMenuGamePad::_Init( void )
+ 	AddButton( L( "Done" ), nullptr, PC_DONE, VoidCb( &CMenuGamePad::SaveAndPopMenu ) );	// Обе строки уже встречались ранее !!
+ 	for( i = 0; i < 6; i++ )
+ 		AddItem( axisBind[i] );
++#if !XASH_WIIU // text input uses the system keyboard
+ 	AddItem( enableOsk );
++#endif
+ 	AddItem( side );
+ 	AddItem( invSide );
+ 	AddItem( forward );
 diff --git a/menus/Main.cpp b/menus/Main.cpp
-index 4d1a382..cb7725f 100644
+index 4d1a382..8d04e15 100644
 --- a/menus/Main.cpp
 +++ b/menus/Main.cpp
 @@ -19,6 +19,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
@@ -84,7 +138,36 @@ index 4d1a382..cb7725f 100644
  #include "Framework.h"
  #include "Action.h"
  #include "Bitmap.h"
-@@ -297,10 +298,14 @@ void CMenuMain::_Init( void )
+@@ -174,11 +175,21 @@ void CMenuMain::_Init( void )
+ 		bCustomGame = true;
+ 	else bCustomGame = false;
+ 
++#if XASH_WIIU
++	// each game is its own app on the Wii U Menu, the engine can't restart into another one
++	bCustomGame = false;
++#endif
++
+ 	// console
+ 	console.SetNameAndStatus( L( "GameUI_Console" ), L( "Show console" ) );
+ 	console.iFlags |= QMF_NOTIFY;
+ 	console.SetPicture( PC_CONSOLE );
++#if XASH_WIIU
++	// no keyboard key for it on a console, so the menu button is the only way in
++	console.SetVisibility( true );
++#else
+ 	console.SetVisibility( gpGlobals->developer );
++#endif
+ 	SET_EVENT_MULTI( console.onReleased,
+ 	{
+ 		UI_SetActiveMenu( false );
+@@ -292,15 +303,21 @@ void CMenuMain::_Init( void )
+ 
+ 	AddItem( configuration );
+ 	AddItem( saveRestore );
++#if !XASH_WIIU // single player only: no network play on this port
+ 	AddItem( multiPlayer );
++#endif
+ 
  	if ( bCustomGame )
  		AddItem( customGame );
  
@@ -99,7 +182,7 @@ index 4d1a382..cb7725f 100644
  }
  
  /*
-@@ -326,7 +331,11 @@ void CMenuMain::VidInit( bool connected )
+@@ -326,7 +343,11 @@ void CMenuMain::VidInit( bool connected )
  	quit.SetCoord( hoffset, previews_voffset + ygap );
  
  	// let's start calculating positions
@@ -111,6 +194,165 @@ index 4d1a382..cb7725f 100644
  
  	if( bCustomGame )
  	{
+@@ -334,8 +355,10 @@ void CMenuMain::VidInit( bool connected )
+ 		yoffset -= ygap;
+ 	}
+ 
++#if !XASH_WIIU
+ 	multiPlayer.SetCoord( hoffset, yoffset );
+ 	yoffset -= ygap;
++#endif
+ 
+ 	bool single = gpGlobals->maxClients < 2;
+ 
+@@ -394,7 +417,11 @@ void CMenuMain::_VidInit()
+ 
+ void CMenuMain::Think()
+ {
++#if XASH_WIIU
++	if( true )
++#else
+ 	if( gpGlobals->developer )
++#endif
+ 	{
+ 		if( !console.IsVisible( ))
+ 			console.Show();
+diff --git a/menus/VideoOptions.cpp b/menus/VideoOptions.cpp
+index 69dd50a..854a045 100644
+--- a/menus/VideoOptions.cpp
++++ b/menus/VideoOptions.cpp
+@@ -18,6 +18,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+ 
+ */
+ 
++#include "build.h"
+ #include "Framework.h"
+ #include "Bitmap.h"
+ #include "PicButton.h"
+@@ -206,7 +207,9 @@ void CMenuVidOptions::_Init( void )
+ 
+ 	vbo.szName = L( "Use VBO" );
+ 	vbo.SetCoord( 72, height );
++#if !XASH_WIIU // gx2gl has no vertex buffer objects
+ 	height += 50;
++#endif
+ 
+ 	swwater.szName = L( "Water ripples" );
+ 	swwater.SetCoord( 72, height );
+@@ -278,7 +281,9 @@ void CMenuVidOptions::_Init( void )
+ 	AddItem( gammaIntensity );
+ 	AddItem( brightness );
+ 	AddItem( detailtex );
++#if !XASH_WIIU
+ 	AddItem( vbo );
++#endif
+ 	AddItem( swwater );
+ 	AddItem( overbright );
+ 	AddItem( filtering );
+diff --git a/model/KbActListModel.h b/model/KbActListModel.h
+index 802936c..d5bcfdb 100644
+--- a/model/KbActListModel.h
++++ b/model/KbActListModel.h
+@@ -20,6 +20,8 @@ GNU General Public License for more details.
+ #include "Utils.h"
+ #include "enginecallback_menu.h"
+ #include "utlvector.h"
++#include "keydefs.h"
++#include "build.h"
+ 
+ // Shared model over gfx/shell/kb_act.lst, the list of game actions used
+ // for the keyboard configuration screen and (read-only) the touch button
+@@ -92,10 +94,19 @@ public:
+ 				}
+ 			}
+ 
++#if XASH_WIIU
++			if( e.bind[0] && IsHiddenOnWiiU( e.bind ))
++				continue;
++#endif
++
+ 			entries.AddToTail( e );
+ 		}
+ 
+ 		EngFuncs::COM_FreeFile( afile );
++
++#if XASH_WIIU
++		RemoveEmptySections();
++#endif
+ 	}
+ 
+ 	int GetColumns() const override { return m_view == VIEW_BINDINGS ? 3 : 2; }
+@@ -137,6 +148,12 @@ public:
+ 			if( !strcmp( str, "<OUT OF RANGE>" ))
+ 				break;
+ 
++#if XASH_WIIU
++			// only GamePad buttons: keyboard binds from PC configs can't be pressed here
++			if( i < K_JOY1 || i > K_AUX32 )
++				continue;
++#endif
++
+ 			const char *b = EngFuncs::KEY_GetBinding( i );
+ 			if( !b )
+ 				continue;
+@@ -163,6 +180,57 @@ protected:
+ 	EView m_view;
+ 
+ private:
++#if XASH_WIIU
++	// actions that need a keyboard, mouse, microphone or other players
++	static bool IsHiddenOnWiiU( const char *bind )
++	{
++		static const char *const hidden[] =
++		{
++			"+strafe", "+mlook", "+klook", "+voicerecord", "messagemode", "messagemode2",
++			"impulse 201", "+showscores", "quit", "changeteam", "changeclass", "impulse 205", "flaginfo",
++		};
++
++		for( size_t i = 0; i < sizeof( hidden ) / sizeof( hidden[0] ); i++ )
++		{
++			if( !stricmp( bind, hidden[i] ))
++				return true;
++		}
++		return false;
++	}
++
++	// drops the headers of sections that have no actions left (Communication, Capture the Flag). A
++	// header is three separator lines (=====, title, =====), so of a run of separators only the last
++	// three belong to a section with actions, and a run at the end belongs to none
++	void RemoveEmptySections()
++	{
++		int i = 0;
++
++		while( i < entries.Count( ))
++		{
++			int start = i, end = i;
++
++			while( end < entries.Count( ) && !entries[end].bind[0] )
++				end++;
++
++			if( end == start )
++			{
++				i++;
++				continue;
++			}
++
++			int drop = end == entries.Count( ) ? end - start : end - start - 3;
++
++			if( drop > 0 )
++			{
++				entries.RemoveMultiple( start, drop );
++				end -= drop;
++			}
++
++			i = end;
++		}
++	}
++#endif
++
+ 	void AddVirtualCommands()
+ 	{
+ 		// Engine-side virtual commands handled directly by Touch_SetCommand:
 diff --git a/sdk_includes/public/build.h b/sdk_includes/public/build.h
 index 8eb7396..8695e26 100644
 --- a/sdk_includes/public/build.h

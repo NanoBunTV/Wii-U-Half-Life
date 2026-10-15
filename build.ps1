@@ -58,7 +58,7 @@ try {
 	if ($LASTEXITCODE -ne 0) { throw "Build failed (exit code $LASTEXITCODE)" }
 
 	Write-Host ''
-	Write-Host "Built: $root\$buildDir\halflife.wuhb" -ForegroundColor Green
+	Write-Host "Built: $root\$buildDir\halflife.wuhb, bshift.wuhb (Blue Shift), opfor.wuhb (Opposing Force)" -ForegroundColor Green
 }
 finally {
 	subst "${letter}:" /D | Out-Null

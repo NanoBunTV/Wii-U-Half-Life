@@ -30,7 +30,8 @@ skipped. `-Force` discards local changes in `external/` first.
 .\build.ps1
 ```
 
-This produces `build\halflife.rpx` and `build\halflife.wuhb`, plus `build\halflife.elf` with debug symbols
+This produces `build\halflife.rpx`, `build\halflife.wuhb` and the same program as `build\bshift.wuhb` and
+`build\opfor.wuhb`, plus `build\halflife.elf` with debug symbols
 for decoding crash addresses.
 
 - **First run:** configures CMake (`Unix Makefiles`, `$DEVKITPRO/cmake/WiiU.cmake`, `RelWithDebInfo`). Later
@@ -70,7 +71,8 @@ read rules; see the comments at the top of the shaders.
 | `xash3d-fwgs.patch` | `external/xash3d-fwgs` (engine) |
 | `library_suffix.patch` | `external/xash3d-fwgs/3rdparty/library_suffix` (`build.h`, platform names) |
 | `mainui.patch` | `external/xash3d-fwgs/3rdparty/mainui` (its copy of `build.h`) |
-| `hlsdk-portable.patch` | `external/hlsdk-portable` (its copy of `build.h`) |
+| `hlsdk-portable.patch` | `external/hlsdk-portable` (its copy of `build.h`, `hud_fastswitch` default) |
+| `hlsdk-bshift.patch`, `hlsdk-opfor.patch` | `external/hlsdk-bshift`, `external/hlsdk-opfor`: hlsdk-portable's `bshift` and `opfor` branches (Blue Shift, Opposing Force game code), same changes |
 | `freevgui.patch` | `external/hlsdk-portable/freevgui` (submodule): big-endian fixes for reading TGA headers and VGUI data streams |
 
 Workflow:
@@ -101,10 +103,12 @@ added or removed game files are picked up automatically.
 
 Requires the Aroma environment.
 
-1. Copy `build\halflife.wuhb` to `sd:/wiiu/apps/`.
+1. Copy `build\halflife.wuhb` to `sd:/wiiu/apps/`, and for the expansions `build\bshift.wuhb` (Blue Shift) and
+   `build\opfor.wuhb` (Opposing Force). Each shows up as its own icon on the Wii U Menu.
 2. Copy the `valve` folder from the Steam install, e.g.
    `E:\Programs\Steam Library\steamapps\common\Half-Life\valve`, to `sd:/wiiu/apps/halflife/valve`. The folder is about
-   600 MB. The other folders (`valve_hd`, `valve_downloads`, `bshift`, `gearbox`, `cstrike`) aren't used yet.
+   600 MB. For the expansions also copy `bshift` (300 MB) and `gearbox` (290 MB) next to it. The other folders
+   (`valve_hd`, `valve_downloads`, `cstrike`) aren't used.
 3. Optional: put engine arguments in `sd:/wiiu/apps/halflife/cmdline.txt` on one line, e.g. `-dev 2 -console`.
 
 ## Icon and splash screens
