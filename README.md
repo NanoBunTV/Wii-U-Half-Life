@@ -57,9 +57,9 @@ enemies can drop into the 50s. If you find a bug, please open an issue (see [Rep
 Requires a Wii U with [Aroma](https://aroma.foryour.cafe/) installed.
 
 1. Download the latest release from the [Releases page](https://github.com/NanoBunTV/Wii-U-Half-Life/releases/latest).
-2. Copy the `halflife` folder to `sd:/wiiu/apps`.
+2. Copy the `halflife` folder to `sd:/wiiu/apps/`.
 3. Copy the `valve` folder from your Steam install (`Steam\steamapps\common\Half-Life\valve`, about 600 MB) to
-   `sd:/wiiu/apps/halflife`.
+   `sd:/wiiu/apps/halflife/`.
 4. Start Half-Life from the Wii U Menu. If the game files aren't found, it says so on screen.
 
 **Blue Shift and Opposing Force** (if you own them on Steam): also copy the `bshift` (about 300 MB) and/or `gearbox`
