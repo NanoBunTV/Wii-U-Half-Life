@@ -1,3 +1,29 @@
+diff --git a/controls/ItemsHolder.cpp b/controls/ItemsHolder.cpp
+index 7be4928..275fe05 100644
+--- a/controls/ItemsHolder.cpp
++++ b/controls/ItemsHolder.cpp
+@@ -12,6 +12,7 @@ but WITHOUT ANY WARRANTY; without even the implied warranty of
+ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ GNU General Public License for more details.
+ */
++#include "build.h"
+ #include "extdll_menu.h"
+ #include "BaseMenu.h"
+ #include "Utils.h"
+@@ -353,6 +354,13 @@ void CMenuItemsHolder::Think( void )
+ {
+ 	FOR_EACH_VEC( m_pItems, i )
+ 	{
++#if XASH_WIIU
++		// GamePad only: a focus flag on any item but the cursor's is stale. Showing a window again resets the
++		// cursor without clearing the old item's flag, and the virtual mouse (parked at the screen centre)
++		// sets mouse focus that navigation never clears, so a second button stayed highlighted
++		if( i != m_iCursor )
++			ClearBits( m_pItems[i]->iFlags, QMF_HASMOUSEFOCUS|QMF_HASKEYBOARDFOCUS );
++#endif
+ 		m_pItems[i]->Think();
+ 	}
+ }
 diff --git a/menus/AdvancedControls.cpp b/menus/AdvancedControls.cpp
 index 3424ce3..a8f83b2 100644
 --- a/menus/AdvancedControls.cpp
@@ -127,7 +153,7 @@ index 0ad3289..d4a7d9f 100644
  	AddItem( invSide );
  	AddItem( forward );
 diff --git a/menus/Main.cpp b/menus/Main.cpp
-index 4d1a382..8d04e15 100644
+index 4d1a382..68608be 100644
 --- a/menus/Main.cpp
 +++ b/menus/Main.cpp
 @@ -19,6 +19,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
@@ -160,7 +186,21 @@ index 4d1a382..8d04e15 100644
  	SET_EVENT_MULTI( console.onReleased,
  	{
  		UI_SetActiveMenu( false );
-@@ -292,15 +303,21 @@ void CMenuMain::_Init( void )
+@@ -269,7 +280,13 @@ void CMenuMain::_Init( void )
+ 		newGame.SetGrayed( true );
+ 	}
+ 
++#if XASH_WIIU
++	// no video decoder, so logo.avi (Blue Shift's, or Half-Life's for Opposing Force) never shows: use the
++	// animated title from Half-Life's resource/logo*.tga instead, which every game here sits on top of
++	if( true )
++#else
+ 	if( FBitSet( gMenu.m_gameinfo.flags, GFL_ANIMATED_TITLE ))
++#endif
+ 	{
+ 		if( animatedBanner.TryLoad())
+ 			AddItem( animatedBanner );
+@@ -292,15 +309,21 @@ void CMenuMain::_Init( void )
  
  	AddItem( configuration );
  	AddItem( saveRestore );
@@ -182,7 +222,7 @@ index 4d1a382..8d04e15 100644
  }
  
  /*
-@@ -326,7 +343,11 @@ void CMenuMain::VidInit( bool connected )
+@@ -326,7 +349,11 @@ void CMenuMain::VidInit( bool connected )
  	quit.SetCoord( hoffset, previews_voffset + ygap );
  
  	// let's start calculating positions
@@ -194,7 +234,7 @@ index 4d1a382..8d04e15 100644
  
  	if( bCustomGame )
  	{
-@@ -334,8 +355,10 @@ void CMenuMain::VidInit( bool connected )
+@@ -334,8 +361,10 @@ void CMenuMain::VidInit( bool connected )
  		yoffset -= ygap;
  	}
  
@@ -205,7 +245,7 @@ index 4d1a382..8d04e15 100644
  
  	bool single = gpGlobals->maxClients < 2;
  
-@@ -394,7 +417,11 @@ void CMenuMain::_VidInit()
+@@ -394,7 +423,11 @@ void CMenuMain::_VidInit()
  
  void CMenuMain::Think()
  {

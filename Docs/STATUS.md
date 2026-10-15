@@ -37,6 +37,8 @@
 | 2026-10-14 | same | **Real Wii U** (owner) | **Loading works** (quick saves from the title screen, c2a3 → c0a0 → c4a1). GamePad rumble still not felt |
 | 2026-10-14 | rumble v3 (solid runs, no per-frame re-send, logged), `glReadPixels`, missing game files screen | Cemu 2.6, recompiler | `vibrate 500` / `vibrate 1500`: `VPADControlMotor returned 0`. Save picture (356×200) and `screenshot` (1280×720 PNG in `valve/scrshots`) show the scene, right way up (black with `LINEAR_ALIGNED`). Without `valve/` the help text appears on the TV |
 | 2026-10-14 | same | **Real Wii U** (owner) | **GamePad rumble "works great"** |
+| 2026-10-14 | (row below) | **Real Wii U** (owner) | Save pictures from the menu showed the menu; the last used menu button stayed highlighted; Blue Shift and Opposing Force menus had no title |
+| 2026-10-14 | world rendered for the save picture, stale menu focus cleared, animated title for every game | Cemu 2.6, recompiler | Save from the in-game menu: picture shows the game. Blue Shift menu shows the HALF-LIFE title |
 | 2026-10-14 | Blue Shift + Opposing Force (`bshift.wuhb`, `opfor.wuhb`), menus trimmed (no Multiplayer / Change game, Console always shown, Controls list GamePad-only), HUD text x2, config version 1 | Cemu 2.6, recompiler | Blue Shift: ba_tram1 with its blue HUD and credits (now readable). Opposing Force: of1a1 with its own entities. Main menu: Console, New game, Hazard course, Configuration, Load game, Quit. Cemu itself crashed on `changelevel` and on the Opposing Force menu; both fine with `--force-interpreter` (Opposing Force Controls: no Communication / Capture the Flag sections, only GamePad buttons) |
 
 ## Test checklist for new builds
@@ -130,6 +132,6 @@
    hardware.
 5. Blue Shift and Opposing Force: built 2026-10-14 as `bshift.wuhb` / `opfor.wuhb` (owner's choice: one icon
    per game). Both start and play their first map in Cemu; to check on hardware and play through.
-6. Polish: icon and splash art, a first-run message with clear instructions when `sd:/wiiu/apps/halflife/valve` is
+6. Polish: icons, boot screens and boot sound (done 2026-10-14, owner's art), a first-run message with clear instructions when `sd:/wiiu/apps/halflife/valve` is
    missing (done 2026-10-14; other fatal errors still just close the app, as SDL has no message box on Wii
    U), GamePad screen use (HUD, console or map).

@@ -218,13 +218,17 @@ wut_create_wuhb(halflife
 )
 add_dependencies(halflife wuhb_content)
 
+# The boot sound (meta/bootSound.btsnd.gz) isn't something wuhbtool can add: build.ps1 puts it into every
+# .wuhb afterwards (scripts/wuhb-add-file.ps1). Art sources and generator: meta/source, meta/art/make_art.ps1
+#
 # Blue Shift and Opposing Force: the same program in its own .wuhb, so each game has its own icon on the
 # Wii U Menu. Their content folder adds game.txt with the game folder; sys_wiiu.c turns it into -game
-function(game_wuhb name gamedir title)
+function(game_wuhb name gamedir title icon)
 	set(dir "${CMAKE_BINARY_DIR}/content_${name}")
 	file(MAKE_DIRECTORY "${dir}/valve")
-	file(WRITE "${dir}/game.txt.tmp" "${gamedir}")
-	file(COPY_FILE "${dir}/game.txt.tmp" "${dir}/game.txt" ONLY_IF_DIFFERENT)
+	file(WRITE "${CMAKE_BINARY_DIR}/game_${name}.txt.tmp" "${gamedir}") # not in the content folder: it's packed
+	file(COPY_FILE "${CMAKE_BINARY_DIR}/game_${name}.txt.tmp" "${dir}/game.txt" ONLY_IF_DIFFERENT)
+	file(REMOVE "${dir}/game.txt.tmp") # left there by older builds
 	add_custom_command(
 		OUTPUT "${dir}/valve/extras.pk3"
 		COMMAND "${CMAKE_COMMAND}" -E copy "${CONTENT_DIR}/valve/extras.pk3" "${dir}/valve/extras.pk3"
@@ -238,11 +242,11 @@ function(game_wuhb name gamedir title)
 		NAME "${title}"
 		SHORTNAME "${title}"
 		AUTHOR "${APP_AUTHOR}"
-		ICON "${CMAKE_SOURCE_DIR}/meta/icon.png"
+		ICON "${CMAKE_SOURCE_DIR}/meta/${icon}"
 		TVSPLASH "${CMAKE_SOURCE_DIR}/meta/tv-splash.png"
 		DRCSPLASH "${CMAKE_SOURCE_DIR}/meta/drc-splash.png"
 	)
 	add_dependencies(${name}_wuhb wuhb_content_${name})
 endfunction()
-game_wuhb(bshift bshift "Half-Life: Blue Shift")
-game_wuhb(opfor gearbox "Half-Life: Opposing Force")
+game_wuhb(bshift bshift "Half-Life: Blue Shift" icon-bshift.png)
+game_wuhb(opfor gearbox "Half-Life: Opposing Force" icon-opfor.png)

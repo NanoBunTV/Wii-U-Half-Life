@@ -40,6 +40,26 @@ index 39e4f9c..099092b 100644
  CVAR_DEFINE_AUTO( hud_fontrender, "0", FCVAR_ARCHIVE, "hud font render mode (0: additive, 1: holes, 2: trans)" );
  CVAR_DEFINE_AUTO( hud_scale, "0", FCVAR_ARCHIVE|FCVAR_LATCH, "scale hud at current resolution" );
  CVAR_DEFINE_AUTO( hud_scale_minimal_width, "640", FCVAR_ARCHIVE|FCVAR_LATCH, "if hud_scale results in a HUD virtual screen smaller than this value, it won't be applied" );
+diff --git a/engine/client/cl_view.c b/engine/client/cl_view.c
+index c1b3ef1..428cf16 100644
+--- a/engine/client/cl_view.c
++++ b/engine/client/cl_view.c
+@@ -394,8 +394,15 @@ void V_RenderView( void )
+ 	ref_viewpass_t	rvp;
+ 	int		viewnum = 0;
+ 
++#if XASH_WIIU
++	// saving from the menu: the save picture is taken this frame (the menu isn't drawn into it, V_PostRender),
++	// so the world must be. Otherwise the picture is whatever the frame buffer still held: the menu
++	if( !cl.video_prepped || ( !ui_renderworld.value && UI_IsVisible() && !cl.background && cls.scrshot_action != scrshot_savegame ))
++		return;
++#else
+ 	if( !cl.video_prepped || ( !ui_renderworld.value && UI_IsVisible() && !cl.background ))
+ 		return; // still loading
++#endif
+ 
+ 	V_CalcViewRect ();	// compute viewport rectangle
+ 	V_SetRefParams( &rp );
 diff --git a/engine/client/console.c b/engine/client/console.c
 index f4cb680..bdfafee 100644
 --- a/engine/client/console.c

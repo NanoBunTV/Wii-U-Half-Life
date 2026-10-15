@@ -13,10 +13,10 @@
 | `src/platform/wiiu/` | Wii U platform layer: `sys_wiiu.c` (startup, paths, logging, crash handler, watchdog), `net_wiiu.h` (socket compatibility) |
 | `src/gx2gl/` | OpenGL 1.x subset on GX2 for `ref_gl` (see "Hardware rendering" below); `shaders/` holds the GPU assembly and the generated header |
 | `tools/` | Downloaded build tools, not in git (`latte-assembler`, see BUILDING.md) |
-| `meta/` | `.wuhb` icon and splash screens; `meta/art/make_art.ps1` regenerates them |
+| `meta/` | `.wuhb` icons, boot screens and boot sound, built from `meta/source` by `meta/art/make_art.ps1` (BUILDING.md) |
 | `patches/` | The port's changes to the upstream sources (see BUILDING.md) |
 | `external/` | Upstream sources, not in git: `xash3d-fwgs/`, `hlsdk-portable/`, `hlsdk-bshift/`, `hlsdk-opfor/` (fetched by `scripts/fetch-deps.ps1`) |
-| `scripts/` | Helper scripts (fetching, patches, Cemu) |
+| `scripts/` | Helper scripts (fetching, patches, Cemu, `wuhb-add-file.ps1` for the boot sound) |
 
 ## One executable instead of shared libraries
 
@@ -161,7 +161,14 @@ Engine changes for the port are guarded by `#if XASH_WIIU`. They include:
   the built-in on-screen keyboard option. Console is always shown (developer mode not needed). The
   Controls list (`KbActListModel.h`) leaves out chat, voice, mouse/keyboard look and strafe modifiers,
   scores, spray, quit and Opposing Force's Capture the Flag actions, shows only GamePad buttons, and
-  "Use defaults" restores the GamePad layout instead of loading the PC keyboard defaults.
+  "Use defaults" restores the GamePad layout instead of loading the PC keyboard defaults. Only the item at
+  the cursor keeps a focus flag (`CMenuItemsHolder::Think`): showing a menu again reset the cursor without
+  clearing the last button's flag, and the virtual mouse parked at the screen centre set mouse focus that
+  the D-pad never cleared, so two buttons were lit. The title is always the animated one from
+  `resource/logo*.tga`: Blue Shift and Opposing Force use `logo.avi`, which needs a video decoder this
+  build doesn't have, so their menus had no title;
+- saving from the menu renders the world for the save picture's frame (`V_RenderView`, `cl_view.c`):
+  with a menu open the engine skips the world (`ui_renderworld 0`), so the picture was the menu.
 
 The full list is in `patches/xash3d-fwgs.patch`.
 

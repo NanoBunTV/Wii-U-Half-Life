@@ -113,15 +113,27 @@ Requires the Aroma environment.
 
 ## Icon and splash screens
 
-`meta/icon.png` (128x128), `meta/tv-splash.png` (1280x720) and `meta/drc-splash.png` (854x480) are generated
-placeholders:
+The owner's art is in `meta/source` (2026-10-14): `intro.png` (boot screens), `intro.wav` (boot sound) and
+`hl.png` / `bs.png` / `of.png` (icons for Half-Life, Blue Shift, Opposing Force). `make_art.ps1` turns them
+into what the bundles use and must be run again after changing a source file:
 
 ```
 powershell -ExecutionPolicy Bypass -File meta\art\make_art.ps1
 ```
 
-They are deliberately original artwork: no Valve logo or game art, because those are trademarked or
-copyrighted.
+| Output | Used as |
+|---|---|
+| `meta/icon.png`, `icon-bshift.png`, `icon-opfor.png` (128x128) | Wii U Menu icon of `halflife` / `bshift` / `opfor.wuhb` |
+| `meta/tv-splash.png` (1280x720), `meta/drc-splash.png` (854x480) | boot screens on the TV and GamePad, all three bundles |
+| `meta/bootSound.btsnd.gz` | boot sound, all three bundles |
+
+The boot sound needs 48 kHz 16-bit stereo WAV, at most 20 s. A `.btsnd` is an 8-byte big-endian header
+(0 = play once, loop start 0) followed by big-endian PCM. wuhbtool can't add it, so `build.ps1` puts it into
+each bundle's `meta/` folder after the build with `scripts/wuhb-add-file.ps1`, which rewrites the bundle
+(a RomFS) exactly as wuhbtool lays it out (checked: a round trip gives a byte-identical file). Aroma's
+Wii U Menu plugin serves `meta/*.btsnd` from the bundle, and the bundle reader opens `x.gz` for `x`. A
+plain `cmake --build` without `build.ps1` gives bundles without the boot sound. `-List` shows a bundle's
+files: `.\scripts\wuhb-add-file.ps1 -Wuhb build\halflife.wuhb -List`.
 
 ## Releasing
 

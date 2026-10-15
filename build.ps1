@@ -57,6 +57,16 @@ try {
 	& $bash -lc $cmd
 	if ($LASTEXITCODE -ne 0) { throw "Build failed (exit code $LASTEXITCODE)" }
 
+	# boot sound: wuhbtool can't add it, so it goes into each bundle's meta/ folder afterwards (replaced if a
+	# bundle wasn't rebuilt and already has it)
+	$bootSound = Join-Path $root 'meta\bootSound.btsnd.gz'
+	foreach ($bundle in 'halflife', 'bshift', 'opfor') {
+		$wuhb = Join-Path $root "$buildDir\$bundle.wuhb"
+		if (Test-Path $wuhb) {
+			& (Join-Path $root 'scripts\wuhb-add-file.ps1') -Wuhb $wuhb -Path 'meta/bootSound.btsnd.gz' -Source $bootSound | Out-Null
+		}
+	}
+
 	Write-Host ''
 	Write-Host "Built: $root\$buildDir\halflife.wuhb, bshift.wuhb (Blue Shift), opfor.wuhb (Opposing Force)" -ForegroundColor Green
 }
