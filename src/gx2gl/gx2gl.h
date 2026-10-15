@@ -42,10 +42,31 @@ enum
 	GX2GL_PROF_ENTITIES, // R_DrawEntitiesOnList (models, sprites, particles, beams, view model)
 	GX2GL_PROF_STUDIO,   // studio models, all of it (also the game's bone setup in client.dll)
 	GX2GL_PROF_STUDIO_POINTS, // the models' vertex transform, lighting and drawing (R_StudioDrawPoints)
+	GX2GL_PROF_INPUT,    // Host_InputFrame and Host_ClientBegin (input, the client.dll's movement command)
+	GX2GL_PROF_IN_EVENTS, // Host_InputFrame (SDL events, controller polling), includes PADS
+	GX2GL_PROF_PADS,     // VPADRead, KPADReadEx and WPADProbe (wrapped in joy_sdl2.c)
+	GX2GL_PROF_IN_MOVE,  // the client.dll's CL_CreateMove and the engine's controller/gyro move
+	GX2GL_PROF_IN_PREDICT, // CL_PredictMovement for the new command
+	GX2GL_PROF_CL_DLL,   // the client.dll's HUD_Frame
+	GX2GL_PROF_CL_PACKETS, // CL_ReadPackets (the local server's updates, events, sounds)
+	GX2GL_PROF_CL_PREDICT, // CL_RedoPrediction (player movement and weapon prediction)
+	GX2GL_PROF_CL_EMIT,  // CL_EmitEntities (interpolation, the client.dll's AddEntity), includes CL_TEMPENTS
+	GX2GL_PROF_CL_TEMPENTS, // the client.dll's CreateEntities and the temporary entities (shells, gibs, sprites)
 	GX2GL_PROF_COUNT
 };
 unsigned long long GX2GL_ProfStart( void );
 void GX2GL_ProfEnd( int phase, unsigned long long start );
+
+// per-item times within a phase; r_speeds 6 shows the most expensive item of each group
+enum
+{
+	GX2GL_ITEMS_SVC,   // server message types in CL_ParseServerMessage (svc_*)
+	GX2GL_ITEMS_TE,    // temporary entity types in CL_ParseTempEntity (TE_*)
+	GX2GL_ITEMS_BEGIN, // the parts of Host_ClientBegin (see cl_main.c)
+	GX2GL_ITEMS_COUNT
+};
+#define GX2GL_ITEMS_MAX 256
+void GX2GL_ProfItem( int group, int item, unsigned long long start );
 
 // GX2GL_PROF( GX2GL_PROF_SERVER, Host_ServerFrame( )); other platforms define it as just the call
 #define GX2GL_PROF( phase, call ) do { unsigned long long prof_t_ = GX2GL_ProfStart( ); call; GX2GL_ProfEnd( phase, prof_t_ ); } while( 0 )

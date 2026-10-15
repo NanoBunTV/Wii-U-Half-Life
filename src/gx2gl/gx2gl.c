@@ -177,6 +177,11 @@ static struct
 	float alphaRef;
 	GLenum depthFunc;
 	int depthMask;
+	int stencilTest;
+	GLenum stencilFunc, stencilFail, stencilZFail, stencilZPass;
+	int stencilRef;
+	GLuint stencilValueMask, stencilWriteMask;
+	int clearStencil;
 	GLenum cullMode, frontFace;
 	float offsetFactor, offsetUnits;
 	int colorMask;
@@ -195,7 +200,8 @@ static struct
 		OSTime waitGPU, waitFlip, periodStart;
 		OSTime gx2;                      // in GX2GL_Flush and texture uploads
 		OSTime prof[GX2GL_PROF_COUNT];   // GX2GL_ProfEnd
-		char text[512];
+		OSTime items[GX2GL_ITEMS_COUNT][GX2GL_ITEMS_MAX]; // GX2GL_ProfItem
+		char text[800];
 	} stats;
 } g;
 
@@ -618,6 +624,27 @@ static GX2CompareFunction GX2GL_CompareFunc( GLenum func )
 	}
 }
 
+// the stencil test is exact (no LEQUAL workaround as for depth)
+static GX2CompareFunction GX2GL_StencilCompare( GLenum func )
+{
+	return func == GL_EQUAL ? GX2_COMPARE_FUNC_EQUAL : GX2GL_CompareFunc( func );
+}
+
+static GX2StencilFunction GX2GL_StencilOp( GLenum op )
+{
+	switch( op )
+	{
+	case GL_ZERO: return GX2_STENCIL_FUNCTION_ZERO;
+	case GL_REPLACE: return GX2_STENCIL_FUNCTION_REPLACE;
+	case GL_INCR: return GX2_STENCIL_FUNCTION_INCR_CLAMP;
+	case GL_DECR: return GX2_STENCIL_FUNCTION_DECR_CLAMP;
+	case GL_INVERT: return GX2_STENCIL_FUNCTION_INV;
+	case GL_INCR_WRAP: return GX2_STENCIL_FUNCTION_INCR_WRAP;
+	case GL_DECR_WRAP: return GX2_STENCIL_FUNCTION_DECR_WRAP;
+	default: return GX2_STENCIL_FUNCTION_KEEP;
+	}
+}
+
 static GX2BlendMode GX2GL_BlendMode( GLenum factor )
 {
 	switch( factor )
@@ -748,7 +775,8 @@ static struct
 	int viewport[4];
 	float depthRange[2];
 	int scissor[4];
-	int depth[3];
+	int depth[7];
+	int stencilMask[3];
 	int blend[3];
 	int alpha[2];
 	float alphaRef;
@@ -767,7 +795,7 @@ static struct
 static void GX2GL_ApplyState( void )
 {
 	float mvp[16], vsu[24], psu[40];
-	int vp[4], sc[4], depth[3], blend[3], alpha[2], polygon[4];
+	int vp[4], sc[4], depth[7], stencilMask[3], blend[3], alpha[2], polygon[4];
 	float range[2], offset[2];
 	int unit;
 
@@ -821,10 +849,30 @@ static void GX2GL_ApplyState( void )
 	depth[0] = g.depthTest;
 	depth[1] = g.depthTest && g.depthMask;
 	depth[2] = GX2GL_CompareFunc( g.depthFunc );
+	depth[3] = g.stencilTest;
+	depth[4] = g.stencilTest ? GX2GL_StencilCompare( g.stencilFunc ) : GX2_COMPARE_FUNC_ALWAYS;
+	depth[5] = g.stencilTest ? GX2GL_StencilOp( g.stencilZPass ) : GX2_STENCIL_FUNCTION_KEEP;
+	depth[6] = g.stencilTest ? ( GX2GL_StencilOp( g.stencilZFail ) | GX2GL_StencilOp( g.stencilFail ) << 8 ) : 0;
 	if( CHANGED( depth, depth ))
 	{
-		GX2SetDepthOnlyControl( depth[0], depth[1], depth[2] );
+		GX2StencilFunction zfail = (GX2StencilFunction)( depth[6] & 0xFF ), fail = (GX2StencilFunction)( depth[6] >> 8 );
+
+		// GL's stencil state is the same for both faces
+		GX2SetDepthStencilControl( depth[0], depth[1], depth[2], depth[3], depth[3],
+			depth[4], depth[5], zfail, fail, depth[4], depth[5], zfail, fail );
 		REMEMBER( depth, depth );
+	}
+
+	if( g.stencilTest )
+	{
+		stencilMask[0] = g.stencilValueMask & 0xFF;
+		stencilMask[1] = g.stencilWriteMask & 0xFF;
+		stencilMask[2] = g.stencilRef & 0xFF;
+		if( CHANGED( stencilMask, stencilMask ))
+		{
+			GX2SetStencilMask( stencilMask[0], stencilMask[1], stencilMask[2], stencilMask[0], stencilMask[1], stencilMask[2] );
+			REMEMBER( stencilMask, stencilMask );
+		}
 	}
 
 	blend[0] = g.blend ? 1 : 0;
@@ -1161,8 +1209,16 @@ static void glClear_( GLbitfield mask )
 
 	if( mask & GL_COLOR_BUFFER_BIT )
 		GX2ClearColor( &g.cb, g.clearColor[0], g.clearColor[1], g.clearColor[2], g.clearColor[3] );
-	if( mask & GL_DEPTH_BUFFER_BIT )
-		GX2ClearDepthStencilEx( &g.db, g.clearDepth, 0, GX2_CLEAR_FLAGS_DEPTH );
+	if( mask & ( GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT ))
+	{
+		GX2ClearFlags flags = 0;
+
+		if( mask & GL_DEPTH_BUFFER_BIT )
+			flags |= GX2_CLEAR_FLAGS_DEPTH;
+		if( mask & GL_STENCIL_BUFFER_BIT )
+			flags |= GX2_CLEAR_FLAGS_STENCIL;
+		GX2ClearDepthStencilEx( &g.db, g.clearDepth, (uint8_t)g.clearStencil, flags );
+	}
 
 	g.stateLost = 1; // clears change GPU state
 }
@@ -1211,6 +1267,7 @@ static int *GX2GL_Cap( GLenum cap )
 	{
 	case GL_BLEND: return &g.blend;
 	case GL_DEPTH_TEST: return &g.depthTest;
+	case GL_STENCIL_TEST: return &g.stencilTest;
 	case GL_CULL_FACE: return &g.cullFace;
 	case GL_ALPHA_TEST: return &g.alphaTest;
 	case GL_FOG: return &g.fog;
@@ -1287,6 +1344,7 @@ static void glGetIntegerv_( GLenum pname, GLint *params )
 	case GL_MINOR_VERSION: params[0] = 3; break;
 	case GL_RED_BITS: case GL_GREEN_BITS: case GL_BLUE_BITS: case GL_ALPHA_BITS: params[0] = 8; break;
 	case GL_DEPTH_BITS: params[0] = 24; break;
+	case GL_STENCIL_BITS: params[0] = 8; break;
 	case GL_ACTIVE_TEXTURE: params[0] = GL_TEXTURE0 + g.activeUnit; break;
 	case GL_CLIENT_ACTIVE_TEXTURE: params[0] = GL_TEXTURE0 + g.clientUnit; break;
 	default: params[0] = 0; break;
@@ -1348,6 +1406,39 @@ static void glDepthMask_( GLboolean flag )
 		g.depthMask = !!flag;
 	}
 }
+
+static void glStencilFunc_( GLenum func, GLint ref, GLuint mask )
+{
+	if( g.stencilFunc != func || g.stencilRef != ref || g.stencilValueMask != mask )
+	{
+		STATE_CHANGE();
+		g.stencilFunc = func;
+		g.stencilRef = ref;
+		g.stencilValueMask = mask;
+	}
+}
+
+static void glStencilMask_( GLuint mask )
+{
+	if( g.stencilWriteMask != mask )
+	{
+		STATE_CHANGE();
+		g.stencilWriteMask = mask;
+	}
+}
+
+static void glStencilOp_( GLenum fail, GLenum zfail, GLenum zpass )
+{
+	if( g.stencilFail != fail || g.stencilZFail != zfail || g.stencilZPass != zpass )
+	{
+		STATE_CHANGE();
+		g.stencilFail = fail;
+		g.stencilZFail = zfail;
+		g.stencilZPass = zpass;
+	}
+}
+
+static void glClearStencil_( GLint s ) { g.clearStencil = s; }
 
 static void glDepthRange_( GLclampd n, GLclampd f )
 {
@@ -2208,10 +2299,6 @@ static void glPolygonMode_( GLenum face, GLenum mode ) { (void)face; (void)mode;
 static void glPolygonStipple_( const GLubyte *mask ) { (void)mask; }
 static void glClipPlane_( GLenum plane, const GLdouble *eq ) { (void)plane; (void)eq; }
 static void glGetClipPlane_( GLenum plane, GLdouble *eq ) { (void)plane; memset( eq, 0, 4 * sizeof( *eq )); }
-static void glStencilFunc_( GLenum func, GLint ref, GLuint mask ) { (void)func; (void)ref; (void)mask; }
-static void glStencilMask_( GLuint mask ) { (void)mask; }
-static void glStencilOp_( GLenum fail, GLenum zfail, GLenum zpass ) { (void)fail; (void)zfail; (void)zpass; }
-static void glClearStencil_( GLint s ) { (void)s; }
 static GLboolean glIsList_( GLuint list ) { (void)list; return GL_FALSE; }
 static void glTexGenf_( GLenum coord, GLenum pname, GLfloat param ) { (void)coord; (void)pname; (void)param; }
 static void glTexGenfv_( GLenum coord, GLenum pname, const GLfloat *params ) { (void)coord; (void)pname; (void)params; }
@@ -2342,6 +2429,9 @@ static void GX2GL_SetDefaultState( void )
 	g.alphaFunc = GL_ALWAYS;
 	g.depthFunc = GL_LESS;
 	g.depthMask = 1;
+	g.stencilFunc = GL_ALWAYS;
+	g.stencilValueMask = g.stencilWriteMask = ~0u;
+	g.stencilFail = g.stencilZFail = g.stencilZPass = GL_KEEP;
 	g.cullMode = GL_BACK;
 	g.frontFace = GL_CCW;
 	g.colorMask = 0xF;
@@ -2398,7 +2488,7 @@ int GX2GL_CreateContext( int width, int height )
 	g.db.surface.height = height;
 	g.db.surface.depth = 1;
 	g.db.surface.mipLevels = 1;
-	g.db.surface.format = GX2_SURFACE_FORMAT_FLOAT_R32;
+	g.db.surface.format = GX2_SURFACE_FORMAT_FLOAT_X8_X24; // 32-bit float depth + 8-bit stencil
 	g.db.surface.aa = GX2_AA_MODE1X;
 	g.db.surface.use = GX2_SURFACE_USE_DEPTH_BUFFER;
 	g.db.surface.tileMode = GX2_TILE_MODE_DEFAULT;
@@ -2511,6 +2601,26 @@ void GX2GL_ProfEnd( int phase, unsigned long long start )
 		g.stats.prof[phase] += OSGetSystemTime() - (OSTime)start;
 }
 
+void GX2GL_ProfItem( int group, int item, unsigned long long start )
+{
+	if( group >= 0 && group < GX2GL_ITEMS_COUNT && item >= 0 && item < GX2GL_ITEMS_MAX )
+		g.stats.items[group][item] += OSGetSystemTime() - (OSTime)start;
+}
+
+// the most expensive item of a group
+static int GX2GL_TopItem( int group )
+{
+	// begin items 20 and up are totals of the ones below them (cl_main.c), shown separately
+	int top = 0, max = group == GX2GL_ITEMS_BEGIN ? 20 : GX2GL_ITEMS_MAX;
+
+	for( int i = 1; i < max; i++ )
+	{
+		if( g.stats.items[group][i] > g.stats.items[group][top] )
+			top = i;
+	}
+	return top;
+}
+
 // averages for r_speeds 6, every half second. "cpu" is the frame time without the two waits: when it's
 // above 16.7 ms the CPU limits the frame rate, when "gpu wait" is large the GPU does. The phases below
 // it show where the CPU time goes (gx2gl.h); "gx2gl" is the part spent sending draws and uploads
@@ -2518,6 +2628,7 @@ static void GX2GL_UpdateStats( void )
 {
 	OSTime now = OSGetSystemTime();
 	float frames, total, waits, p[GX2GL_PROF_COUNT];
+	int top[GX2GL_ITEMS_COUNT];
 
 	g.stats.frames++;
 	if( !g.stats.periodStart )
@@ -2532,16 +2643,30 @@ static void GX2GL_UpdateStats( void )
 	waits = MS( g.stats.waitGPU + g.stats.waitFlip );
 	for( int i = 0; i < GX2GL_PROF_COUNT; i++ )
 		p[i] = MS( g.stats.prof[i] );
+	for( int i = 0; i < GX2GL_ITEMS_COUNT; i++ )
+		top[i] = GX2GL_TopItem( i );
 
 	snprintf( g.stats.text, sizeof( g.stats.text ),
 		"frame %.1f ms: cpu %.1f\ngpu wait %.1f, vsync wait %.1f\n"
-		"game %.1f, client %.1f, sound %.1f\n"
+		"game %.1f, client %.1f, sound %.1f, input %.1f\n"
+		"client: hud_frame %.1f, packets %.1f\n"
+		"  predict %.1f, entities %.1f (temp %.1f)\n"
+		"input: events %.1f (pads %.1f), move %.1f\n"
+		"  predict %.1f\n"
+		"top: svc %d %.1f, te %d %.1f, begin %d %.1f\n"
+		"  send: cmd %.1f, packet %.1f\n"
 		"3d view %.1f: world %.1f, entities %.1f\n"
 		"studio models %.1f (vertices %.1f)\n"
 		"hud/menu %.1f, gx2gl %.1f\n"
 		"%u draws, %u verts",
 		total, total - waits, MS( g.stats.waitGPU ), MS( g.stats.waitFlip ),
-		p[GX2GL_PROF_SERVER], p[GX2GL_PROF_CLIENT] - p[GX2GL_PROF_SOUND] - p[GX2GL_PROF_SCREEN], p[GX2GL_PROF_SOUND],
+		p[GX2GL_PROF_SERVER], p[GX2GL_PROF_CLIENT] - p[GX2GL_PROF_SOUND] - p[GX2GL_PROF_SCREEN], p[GX2GL_PROF_SOUND], p[GX2GL_PROF_INPUT],
+		p[GX2GL_PROF_CL_DLL], p[GX2GL_PROF_CL_PACKETS], p[GX2GL_PROF_CL_PREDICT],
+		p[GX2GL_PROF_CL_EMIT], p[GX2GL_PROF_CL_TEMPENTS],
+		p[GX2GL_PROF_IN_EVENTS], p[GX2GL_PROF_PADS], p[GX2GL_PROF_IN_MOVE], p[GX2GL_PROF_IN_PREDICT],
+		top[0], MS( g.stats.items[0][top[0]] ), top[1], MS( g.stats.items[1][top[1]] ),
+		top[2], MS( g.stats.items[2][top[2]] ),
+		MS( g.stats.items[GX2GL_ITEMS_BEGIN][20] ), MS( g.stats.items[GX2GL_ITEMS_BEGIN][21] ),
 		p[GX2GL_PROF_VIEW], p[GX2GL_PROF_WORLD], p[GX2GL_PROF_ENTITIES],
 		p[GX2GL_PROF_STUDIO], p[GX2GL_PROF_STUDIO_POINTS],
 		p[GX2GL_PROF_SCREEN] - p[GX2GL_PROF_VIEW] - waits, MS( g.stats.gx2 ),
@@ -2551,6 +2676,7 @@ static void GX2GL_UpdateStats( void )
 	g.stats.frames = g.stats.draws = g.stats.verts = 0;
 	g.stats.waitGPU = g.stats.waitFlip = g.stats.gx2 = 0;
 	memset( g.stats.prof, 0, sizeof( g.stats.prof ));
+	memset( g.stats.items, 0, sizeof( g.stats.items ));
 	g.stats.periodStart = now;
 }
 

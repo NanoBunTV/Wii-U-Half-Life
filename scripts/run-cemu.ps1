@@ -7,6 +7,7 @@
   .\scripts\run-cemu.ps1 -Interpreter       single-core interpreter (slow, but exact; see Docs/DEBUGGING.md)
   .\scripts\run-cemu.ps1 -EngineArgs '-dev 2'   write sd:/wiiu/apps/halflife/cmdline.txt first (engine arguments)
   .\scripts\run-cemu.ps1 -Seconds 60        close Cemu after 60 s (default: leave it running)
+  .\scripts\run-cemu.ps1 -Cemu <path>       another Cemu.exe, e.g. the portable test copy (Docs/DEBUGGING.md)
 
   Engine output appears in Cemu's log as "[OSConsole]" lines; that needs Cemu's "Coreinit Logging"
   option (Debug > Logging), which is logflag 131072 in %APPDATA%\Cemu\settings.xml.
@@ -22,7 +23,10 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $Wuhb = (Resolve-Path $Wuhb).Path
-$log = Join-Path $env:APPDATA 'Cemu\log.txt'
+# a Cemu with a "portable" folder next to it keeps its settings and log there (a second copy can then run
+# next to another project's Cemu, see Docs/DEBUGGING.md)
+$portable = Join-Path (Split-Path $Cemu) 'portable'
+$log = if (Test-Path $portable) { Join-Path $portable 'log.txt' } else { Join-Path $env:APPDATA 'Cemu\log.txt' }
 
 if ($PSBoundParameters.ContainsKey('EngineArgs')) {
 	$cmdline = Join-Path $SdCard 'wiiu\apps\halflife\cmdline.txt'

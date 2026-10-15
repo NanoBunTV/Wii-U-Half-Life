@@ -124,7 +124,11 @@ Engine changes for the port are guarded by `#if XASH_WIIU`. They include:
   and aiming every frame. Calibration runs on the raw GamePad axes; `SDLash_WiiUGyroToView` then converts
   them to pitch (−x) and yaw around gravity (from the accelerometer, so any holding angle works);
 - `-log` writes `sd:/wiiu/apps/halflife/engine.log` (`sys_con.c`, absolute default path on Wii U);
-- `+gyro_recenter` (−): levels the view and pauses gyro aiming while held (`in_joy.c`);
+- `joy_gyro_toggle` (−, since 2026-10-14): gyro aiming on/off through the saved `joy_gyro_enable` (on by
+  default) with a centre-screen message (`in_joy.c`). It replaced `+gyro_recenter` on − (still a command:
+  levels the view, gyro paused while held), since the right stick (`joy_centerview`) levels the view
+  already. `Key_SetBinding` turns a saved `bind BACK +gyro_recenter` into the toggle, so older
+  `config.cfg` files get it too (`in_keys.c`);
 - HOME → Close (`SDL_QUIT`) quits immediately instead of opening the menu's quit dialog (`host_sdl2.c`);
 - GamePad rumble through `VPADControlMotor` (`Platform_Vibrate2` in `joy_sdl2.c`): SDL's Wii U driver has
   none, and each failed `SDL_GameControllerRumble` logged an SDL error (every frame during `env_shake`).
@@ -207,7 +211,7 @@ engine's `GL_GetProcAddress`, which on Wii U is `GX2GL_GetProcAddress`.
 
 - **Engine side (`vid_sdl2.c`, `XASH_WIIU`):** no `SDL_WINDOW_OPENGL` and no SDL GL library. The "context"
   is `GX2GL_CreateContext(render size)`, swap is `GX2GL_SwapBuffers`, vsync is `GX2GL_SetSwapInterval`. GL
-  attributes are fixed (RGBA8, 24-bit depth, no stencil). The render size is `vid_wiiu_render_height` (as for
+  attributes are fixed (RGBA8, 24-bit depth, 8-bit stencil). The render size is `vid_wiiu_render_height` (as for
   `ref_soft`, `VID_WiiURenderSize`). `gl` is the default and `soft` the fallback. On Wii U the saved
   `r_refdll` (`video.cfg`) is ignored (`ref_common.c`, `R_Init`): the menu's renderer choice is hidden, and
   installs from before ref_gl had `soft` saved. Only `-ref soft` in `cmdline.txt` picks the software
@@ -245,10 +249,26 @@ engine's `GL_GetProcAddress`, which on Wii U is `GX2GL_GetProcAddress`.
 - **Performance counters:** `r_speeds 6` (a Wii U case in `ref_gl`'s `gl_backend.c`) shows, averaged over
   half a second (`glGetString( GX2GL_STATS )`): frame time, CPU time (frame time minus the waits), the time
   spent waiting for the GPU and for vsync; then where the CPU time goes: game (server frame), client,
-  sound mixing, the 3D view with the world and the entities, studio models (all of it, including the game's
-  bone setup) and their vertex part (`R_StudioDrawPoints`), HUD/menus, and gx2gl's own share (sending
-  draws, uploads); then draw calls, vertices and polygon counts. The phases are timed with
-  `GX2GL_PROF( phase, call )` (`gx2gl.h`) in `host.c`, `cl_main.c`, `gl_rmain.c` and `gl_studio.c`.
+  sound mixing, input (`Host_InputFrame` and `Host_ClientBegin`; split into SDL events with the controller
+  reads `VPADRead` / `KPADReadEx` / `WPADProbe` as "pads", wrapped at link time in `joy_sdl2.c` only to time
+  them, the movement command, and prediction of the new command), the client's parts (the client.dll's
+  `HUD_Frame`, reading the local server's packets, movement prediction, and adding entities with the
+  temporary entities as a sub-part), the 3D view with the world and the entities, studio models (all of
+  it, including the game's bone setup) and their vertex part (`R_StudioDrawPoints`), HUD/menus, and
+  gx2gl's own share (sending draws, uploads); then draw calls, vertices, polygon, temporary entity and
+  particle counts. A "top" line names the most expensive server message type (`svc` number, game messages
+  included, timed in `CL_ParseServerMessage`), temporary entity type (`TE_*` number, `CL_ParseTempEntity`)
+  and part of `Host_ClientBegin` (1 commands, 2 connection state, 3 logo, 4 client data, 6 Steam broker;
+  `CL_SendCommand` split into 7 solid entities, 8 solid players, 9 `Platform_PreCreateMove`, 10
+  interpolation amount, 11 writing user commands, 12 voice, 13 `Netchan_TransmitBits`, 14 netchan
+  progress, 15 packet loss) with their times (`GX2GL_ProfItem`); "send" shows `CL_CreateCmd` and
+  `CL_WritePacket` in full (items 20 and 21). Item numbers: `svc_*` in `protocol.h` (41 =
+  delta entity updates), `TE_*` in `const.h` (109 = gunshot decal). The phases are timed with `GX2GL_PROF( phase, call )` (`gx2gl.h`) in `host.c`,
+  `cl_main.c`, `cl_frame.c`, `gl_rmain.c` and `gl_studio.c`.
+- **Network send buffer (2026-10-14):** `Netchan_TransmitBits` (`net_chan.c`) builds each packet in a
+  `NET_MAX_MESSAGE` (192 KB) stack buffer and used to clear all of it on every send, about 1 ms per call on
+  the Wii U and paid twice per frame (client to server, server to client). It now clears only the header,
+  the reliable and unreliable payload, padding and some slack (all platforms).
 - **Model animation and lighting on the CPU (2026-10-14):** the Wii U's CPU has no fast sin/cos/acos
   (newlib's take well over 100 cycles), and bone setup calls them about 16 times per bone and animation
   layer. Under `XASH_WIIU`, the engine's `SinCos` (`public/xash3d_mathlib.h`, used by view, movement and
@@ -262,14 +282,20 @@ engine's `GL_GetProcAddress`, which on Wii U is `GX2GL_GetProcAddress`.
   it by 16 for the register (Cemu's GX2 does the same). Until 2026-10-14 gx2gl multiplied by 16 as well,
   so brush entities (ref_gl draws them with `gl_polyoffset_bmodels`, factor -0.5) were pulled 16 times too
   far toward the camera at steep angles and showed through walls (c1a0's door wheels).
-- **Output:** our own colour (RGBA8) and depth (float 32) buffers in MEM2, copied (scaled) to the TV and
+- **Stencil (2026-10-14):** the depth buffer is `GX2_SURFACE_FORMAT_FLOAT_X8_X24` (32-bit float depth plus
+  8-bit stencil, so depth precision didn't change), and `glStencilFunc/Op/Mask`, `glClearStencil` and
+  `GL_STENCIL_TEST` map to `GX2SetDepthStencilControl` / `GX2SetStencilMask` (same state for both faces).
+  ref_gl uses it for decals on see-through `{` surfaces (grates, fences) and for `r_shadows 1` (each pixel
+  darkened once). The stencil `GL_EQUAL` is exact; only the depth test has the LEQUAL workaround below.
+- **Output:** our own colour (RGBA8) and depth/stencil buffers in MEM2, copied (scaled) to the TV and
   GamePad scan buffers that SDL's video driver owns. Nothing is sent to the GPU in the background, checked
   live with `ProcUIInForeground` before every GPU call or wait. A per-frame flag wasn't enough: after
   HOME → Close the renderer shuts down in the background, and its `GX2DrawDone` never returned (the
   system hung at the loading screen, 2026-10-14). Textures uploaded while in the background are lost.
 - **Differences from real OpenGL:** `GL_EQUAL` depth tests are done as `GL_LEQUAL` (lightmap passes
-  failed the exact test); `glReadPixels` only does `GL_RGB`/`GL_RGBA` bytes and stalls until the GPU is
+  failed the exact test in Cemu; ref_gl only uses it for blend passes over surfaces that already wrote
+  their depth, where both give the same picture); `glReadPixels` only does `GL_RGB`/`GL_RGBA` bytes and stalls until the GPU is
   done (fine for screenshots and save pictures): it copies the colour buffer to a `GX2_TILE_MODE_LINEAR_SPECIAL`
   surface, the mode games use for CPU reads. Cemu only writes the pixels back for that mode, so
-  `LINEAR_ALIGNED` came out black there; no stencil, `glTexGen`, clip planes,
+  `LINEAR_ALIGNED` came out black there; no `glTexGen`, clip planes,
   polygon modes, `GL_TEXTURE_ENV_COLOR`, 1D/3D/cube textures; fog is always `GL_EXP`-style on eye-space z.

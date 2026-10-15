@@ -143,7 +143,7 @@ index 0ad3289..d4a7d9f 100644
 --- a/menus/Gamepad.cpp
 +++ b/menus/Gamepad.cpp
 @@ -237,7 +237,9 @@ void CMenuGamePad::_Init( void )
- 	AddButton( L( "Done" ), nullptr, PC_DONE, VoidCb( &CMenuGamePad::SaveAndPopMenu ) );	// ╨₧╨▒╨╡ ╤ü╤é╤Ç╨╛╨║╨╕ ╤â╨╢╨╡ ╨▓╤ü╤é╤Ç╨╡╤ç╨░╨╗╨╕╤ü╤î ╤Ç╨░╨╜╨╡╨╡ !!
+ 	AddButton( L( "Done" ), nullptr, PC_DONE, VoidCb( &CMenuGamePad::SaveAndPopMenu ) );	// Обе строки уже встречались ранее !!
  	for( i = 0; i < 6; i++ )
  		AddItem( axisBind[i] );
 +#if !XASH_WIIU // text input uses the system keyboard

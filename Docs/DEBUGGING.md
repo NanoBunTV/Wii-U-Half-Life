@@ -27,6 +27,11 @@ Or start it by hand: `Cemu.exe -g "F:\Wii U Homebrew\Half-Life\build\halflife.wu
   - Engine output appears in `%APPDATA%\Cemu\log.txt` as `[OSConsole]` lines.
 - **Only one Cemu log:** `log.txt` is shared by every Cemu instance. On 2026-10-13 another project (an SCP:CB
   Wii U port) ran Cemu at the same time and overwrote it. If the log shows another title, rerun.
+- **Second Cemu for tests (2026-10-14):** another project's Cemu (OpenRCT2) often runs at the same time,
+  and a second normal instance hangs without loading the game. `E:\ROMs and Emulators\_Emulators\Cemu-HL-test`
+  is a portable copy (Cemu.exe, resources, `portable\settings.xml` windowed, `portable\sdcard` a junction
+  to the same SD card) with its own log in `portable\log.txt`. Use
+  `run-cemu.ps1 -Cemu '...\Cemu-HL-test\Cemu.exe'` and `capture-cemu.ps1 -Cemu <same>`.
 - **Scripts that wait for a log line:** Cemu recreates `log.txt` about 1–2 s after starting, so the previous
   run's lines are still there at first. Wait a few seconds before searching it (`run-cemu.ps1` does).
 

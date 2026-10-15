@@ -3,7 +3,10 @@
   Only Cemu's own windows are captured (PrintWindow), not the rest of the desktop.
   .\scripts\capture-cemu.ps1 -OutDir <folder>
 #>
-param([string]$OutDir = (Join-Path $PSScriptRoot '..\build\cemu-capture'))
+param(
+	[string]$OutDir = (Join-Path $PSScriptRoot '..\build\cemu-capture'),
+	[string]$Cemu = $null # only this Cemu.exe (when another project's Cemu runs too)
+)
 
 Add-Type -AssemblyName System.Drawing
 Add-Type @'
@@ -36,6 +39,7 @@ public static class CemuWin {
 New-Item -ItemType Directory -Force $OutDir | Out-Null
 $n = 0
 foreach ($proc in Get-Process Cemu -ErrorAction SilentlyContinue) {
+	if ($Cemu -and $proc.Path -ne (Resolve-Path $Cemu).Path) { continue }
 	foreach ($h in [CemuWin]::ForPid([uint32]$proc.Id)) {
 		$r = New-Object CemuWin+RECT
 		[void][CemuWin]::GetWindowRect($h, [ref]$r)

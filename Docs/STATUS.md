@@ -45,6 +45,13 @@
 | 2026-10-14 | same | **Real Wii U** (owner), `r_speeds 6` | 58–60 FPS everywhere shown. c1a0 tram with the lobby in view: CPU 8.9 ms (game 1.3, client 0.4, sound 1.2, world 1.4, entities 3.0 of which studio models 2.4 / their vertices 2.0, HUD 0.3, gx2gl 0.5), 199 draws, 10,120 verts, 2,976 model polys. Tram in a tunnel: CPU 4.8 ms. c1a0 lobby: CPU 8.8 ms (game 1.6, client 1.3, sound 0.2, world 1.1, studio models 2.1 / vertices 1.8). Hardware takes about twice Cemu's CPU time |
 | 2026-10-14 | same | **Real Wii U** (owner), `r_speeds 6` | c1a0 door wheels correct. Surface Tension: canyon with 3 soldiers 60 FPS, CPU 12.4 ms (game 2.6, studio models 3.4). Open walled area with 4–5 soldiers 59 FPS, **CPU 16.5 ms, at the limit**: game 2.5, client 1.4, world 2.4, entities 6.4 of which studio models 5.4 (vertices 3.2, so about 2.2 in the game's bone setup), HUD 0.8, gx2gl 0.8; 322 draws, 13,808 verts, 4,615 model polys |
 | 2026-10-14 | fast sin/cos + blending for animation, cheaper model lighting | **Real Wii U** (owner), `r_speeds 6` | Same walled area, 4 soldiers: **CPU 15.2 ms** (was 16.5): game 2.0, client 3.4, sound 0.2, world 2.0, entities 5.1 of which studio models **4.0** (was 5.4; vertices 2.6, was 3.2; bones about 1.4, was 2.2), HUD 0.9, gx2gl 0.7; 273 draws, 13,324 verts, 4,495 model polys. 52 FPS: frame 19.3 ms with 4.0 ms vsync wait, so some frames still miss the 16.7 ms vsync |
+| 2026-10-14 | gx2gl stencil buffer; client time split in `r_speeds 6` | Cemu 2.6, recompiler (portable test copy) | c2a2a: water draws (textured, warping). c1a0 lobby with `r_shadows 1`: model shadows under the scientists, no artifacts. Normal rendering unchanged with the new depth/stencil format. Decals on grates not tested (needs shooting one). The c2a5 save shows only 0.2 ms client in Cemu (player dead, no fight), so the 3.4 ms needs the new breakdown on hardware |
+| 2026-10-14 | same | **Real Wii U** (owner), `r_speeds 6` | Same walled-area fight, 58 FPS, CPU 14.7 ms: game 2.0, **client 1.2** (packets 0.5, predict 0.1, entities 0.6 of which temp 0.4), sound 0.1, **input 1.4** (Cemu: 0.2), world 2.2, entities 6.5, studio models 5.3 (vertices 3.2), HUD 0.8, gx2gl 0.9; 133 tempents, 172 particles. The earlier 3.4 ms client reading didn't recur; input is now the odd one out, so it was split further (events / pads / move / predict) |
+| 2026-10-14 | input split | **Real Wii U** (owner), `r_speeds 6` | Same fight, 54 FPS, CPU 17.8 ms: **client 3.5 of which packets 2.8** (the earlier 3.4 ms spike), input 1.5 but events 0.0, pads 0.1, move 0.0, predict 0.2, so ~1.2 ms is elsewhere in `Host_ClientBegin`; 113 tempents, 212 particles. Next: the "top" line (which message type / TE type / begin part) |
+| 2026-10-14 | "top" line | **Real Wii U** (owner), `r_speeds 6` | Same fight, 60 FPS, CPU 13.5 ms: client 1.1 (packets 0.5), input 1.2 of which **`CL_SendCommand` 1.2** (move + predict 0.2 of it); top svc 41 (delta entities) 0.4, te 109 (gunshot decal) 0.0. `CL_SendCommand` split further (begin parts 7–15, send totals) |
+| 2026-10-14 | Send parts | **Real Wii U** (owner), `r_speeds 6` | Same fight, CPU 15.2 ms: top begin 13 (`Netchan_TransmitBits`) 0.9, send: cmd 0.4, packet 1.0. Cause: `Netchan_TransmitBits` cleared its whole 192 KB `send_buf` (`NET_MAX_MESSAGE`) on every send, on the client and again on the server. Now clears only the bytes the packet can use; Cemu c1a0 tram ride runs normally, begin 13 gone from "top" |
+| 2026-10-14 | Send buffer fix | **Real Wii U** (owner), `r_speeds 6` | Same fight, 58 FPS, **CPU 12.2 ms** (was 13.5–15.2): input 0.4 (was 1.2–1.4), packet 0.1 (was 1.0), game 1.7 (was 2.2), client 0.9. Remaining CPU is mostly rendering: 3D view 7.9 of which studio models 4.6 (vertices 3.0) |
+| 2026-10-14 | − = gyro aiming on/off (`joy_gyro_toggle`), "top" timing line | Cemu 2.6 (test copy) | − bound to the toggle; a saved `bind BACK "+gyro_recenter"` loads as the toggle; "top" line shows (c1a0: begin part 5, 0.2 ms) |
 
 ## Test checklist for new builds
 
@@ -106,12 +113,17 @@
   hardware numbers from scenes that drop below 60 FPS. A Surface Tension fight with 4–5 soldiers used
   16.5 of 16.7 ms, 5.4 of them for models; fast sin/cos and blending for model animation and cheaper model
   lighting followed (2026-10-14, ARCHITECTURE.md): 15.2 ms there on hardware, studio models 4.0 ms, but
-  still 52 FPS because some frames miss vsync. Further candidates: the client's 3.4 ms in that scene, VBO
-  support for the world.
-- **Save dates show Jan 1 1980** in Cemu (file time 0); not checked on hardware.
-- **gx2gl gaps:** no stencil (`ref_gl`'s stencil shadows off, and
-  decals on transparent `{` surfaces such as grates are skipped), water
-  not checked yet, the `GL_EQUAL` → `LEQUAL` workaround (ARCHITECTURE.md).
+  still 52 FPS because some frames miss vsync; the owner finds 52–60 FPS fine. The client's 3.4 ms didn't
+  recur (1.2 ms in the next reading), but input took 1.4 ms on hardware against 0.2 in Cemu; `r_speeds 6`
+  now splits input (events, pads, move, predict) to find out why. The cause was `Netchan_TransmitBits`
+  clearing a 192 KB buffer per send (fixed, ARCHITECTURE.md): the same fight is at CPU 12.2 ms on hardware
+  since. **Done for release** (owner, 2026-10-14); only revisit for scenes that drop well below 50 FPS
+  during playtesting. Candidates then: cheaper model vertex work (3.0 ms of the 4.6 ms for models), VBOs
+  for the world.
+- **Save dates show Jan 1 1980** in Cemu (file time 0); correct on hardware (owner, 2026-10-14).
+- **gx2gl gaps:** stencil added 2026-10-14 (decals on grates and fences, `r_shadows`); decals on grates
+  and water checked on hardware (owner, 2026-10-14). The `GL_EQUAL` → `LEQUAL` depth workaround stays
+  (harmless for ref_gl's use, ARCHITECTURE.md).
 - **Decals in Cemu:** invisible with the recompiler (Cemu bug, DEBUGGING.md); use `--force-interpreter`.
 - **Settings hidden on Wii U:** video modes, touch controls, the update check, Previews and the mouse-only
   options (mouse sensitivity, invert mouse, mouse look, look strafe, mouse filter, raw input, input
@@ -123,7 +135,7 @@
 - **Cemu's recompiler crashes more since the expansions were linked in** (2026-10-14): a level change
   (`changelevel`, e.g. the c0a0 tram) and the Opposing Force main menu killed Cemu itself, no guest
   exception, and the same runs work with `--force-interpreter`. Same class as the `zone.c` and decal bugs
-  (DEBUGGING.md). Not seen on hardware so far; level changes need a hardware check.
+  (DEBUGGING.md). Level changes work on hardware (owner, 2026-10-14), so this is Cemu only.
 - **Counter-Strike (`cstrike`) and other mods:** not supported (closed-source or separate game code).
 - **IPv4 only:** the Wii U network stack has no IPv6.
 
@@ -132,17 +144,16 @@
 1. Hardware renderer (`ref_gl` on gx2gl, ARCHITECTURE.md), **required before release**: started
    2026-10-14; the Hazard Course plays at 30–60 FPS on hardware, HOME → Close works, and it's the default
    renderer. Sprites, studio models, sky, decals and particles checked in Cemu. Performance is done for
-   now (owner, 2026-10-14: 52–60 FPS in heavy fights is fine). Next: the gx2gl gaps (stencil, water) and
-   checking water on hardware. Screenshots and save pictures work since
-   2026-10-14 (`glReadPixels`).
-2. Confirm on hardware: the gyro yaw flip, the in-game Quit.
-3. On-screen keyboard: SDL's swkbd opens for the console and is drawn by gx2gl since 2026-10-14 (to
-   confirm on hardware). Check save names and the multiplayer name field too.
-4. Play through the campaign in Cemu and on hardware; check whether the `zone.c` workaround is needed on
-   hardware.
-5. Blue Shift and Opposing Force: built 2026-10-14 as `bshift.wuhb` / `opfor.wuhb` (owner's choice: one icon
-   per game). Both start and play their first map in Cemu; to check on hardware and play through.
-6. Polish: icons and boot screens (done 2026-10-14, owner's art, work on hardware; the boot sound is in
+   now (owner, 2026-10-14: 52–60 FPS in heavy fights is fine). Stencil added (2026-10-14); decals on
+   grates and water checked on hardware. Screenshots and save pictures work since 2026-10-14
+   (`glReadPixels`).
+2. Hardware checks done (owner, 2026-10-14): in-game Quit, on-screen keyboard (console and save names),
+   level changes, decals and water, save dates, Blue Shift and Opposing Force start and play.
+3. Play through the campaign (and the expansions) on hardware; check whether the `zone.c` workaround is
+   needed on hardware.
+4. Release: public README written 2026-10-14 (features, install, credits, licenses, build at the bottom);
+   `LICENSE.md` (GPLv3) added by the owner. See BUILDING.md "Releasing".
+5. Polish: icons and boot screens (done 2026-10-14, owner's art, work on hardware; the boot sound is in
    the bundles but Aroma doesn't play homebrew boot sounds, BUILDING.md), a first-run message with clear instructions when `sd:/wiiu/apps/halflife/valve` is
    missing (done 2026-10-14; other fatal errors still just close the app, as SDL has no message box on Wii
    U), GamePad screen use (HUD, console or map).

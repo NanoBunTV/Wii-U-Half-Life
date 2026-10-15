@@ -23,8 +23,37 @@ index 7cd9c1f..4b18038 100644
  #elif XASH_ANDROID
  	#define DEFAULT_TOUCH_ENABLE "1"
  #elif XASH_MOBILE_PLATFORM
+diff --git a/engine/client/cl_frame.c b/engine/client/cl_frame.c
+index aace8cf..88f0556 100644
+--- a/engine/client/cl_frame.c
++++ b/engine/client/cl_frame.c
+@@ -22,6 +22,11 @@ GNU General Public License for more details.
+ #include "studio.h"
+ #include "sound.h"
+ #include "input.h"
++#if XASH_WIIU
++#include "gx2gl/gx2gl.h" // GX2GL_PROF: frame phase times for r_speeds 6
++#else
++#define GX2GL_PROF( phase, call ) call
++#endif
+ 
+ // #define STUDIO_INTERPOLATION_FIX
+ 
+@@ -1317,10 +1322,10 @@ void CL_EmitEntities( void )
+ 	CL_LinkPacketEntities ( &cl.frames[cl.parsecountmod] );
+ 
+ 	// link custom user temp entities
+-	clgame.dllFuncs.pfnCreateEntities();
++	GX2GL_PROF( GX2GL_PROF_CL_TEMPENTS, clgame.dllFuncs.pfnCreateEntities());
+ 
+ 	// evaluate temp entities
+-	CL_TempEntUpdate ();
++	GX2GL_PROF( GX2GL_PROF_CL_TEMPENTS, CL_TempEntUpdate ());
+ 
+ 	// fire events (client and server)
+ 	CL_FireEvents ();
 diff --git a/engine/client/cl_main.c b/engine/client/cl_main.c
-index 39e4f9c..7ba2ff2 100644
+index 39e4f9c..8f06d3c 100644
 --- a/engine/client/cl_main.c
 +++ b/engine/client/cl_main.c
 @@ -24,6 +24,11 @@ GNU General Public License for more details.
@@ -52,7 +81,178 @@ index 39e4f9c..7ba2ff2 100644
  CVAR_DEFINE_AUTO( hud_fontrender, "0", FCVAR_ARCHIVE, "hud font render mode (0: additive, 1: holes, 2: trans)" );
  CVAR_DEFINE_AUTO( hud_scale, "0", FCVAR_ARCHIVE|FCVAR_LATCH, "scale hud at current resolution" );
  CVAR_DEFINE_AUTO( hud_scale_minimal_width, "640", FCVAR_ARCHIVE|FCVAR_LATCH, "if hud_scale results in a HUD virtual screen smaller than this value, it won't be applied" );
-@@ -3945,10 +3955,10 @@ void Host_ClientFrame( void )
+@@ -749,6 +759,13 @@ static void CL_UpdateClientData( void )
+ CL_CreateCmd
+ =================
+ */
++#if XASH_WIIU
++// time the parts of Host_ClientBegin for r_speeds 6 ("top: begin <part>", Docs/ARCHITECTURE.md)
++#define BEGIN_PART( n, call ) do { unsigned long long t_ = GX2GL_ProfStart( ); call; GX2GL_ProfItem( GX2GL_ITEMS_BEGIN, n, t_ ); } while( 0 )
++#else
++#define BEGIN_PART( n, call ) call
++#endif
++
+ static void CL_CreateCmd( void )
+ {
+ 	usercmd_t nullcmd = { 0 }, *cmd;
+@@ -780,9 +797,9 @@ static void CL_CreateCmd( void )
+ 	// ms can't be negative, rely on error accumulation only if FPS > 1000
+ 	ms = Q_min( ms, 255 );
+ 
+-	CL_SetSolidEntities();
++	BEGIN_PART( 7, CL_SetSolidEntities());
+ 	CL_PushPMStates();
+-	CL_SetSolidPlayers( cl.playernum );
++	BEGIN_PART( 8, CL_SetSolidPlayers( cl.playernum ));
+ 
+ 	// message we are constructing.
+ 	int       i = cls.netchan.outgoing_sequence & CL_UPDATE_MASK;
+@@ -804,15 +821,15 @@ static void CL_CreateCmd( void )
+ 	}
+ 
+ 	qboolean  active = (( cls.signon == SIGNONS ) && !cl.paused && !cls.demoplayback );
+-	Platform_PreCreateMove();
+-	clgame.dllFuncs.CL_CreateMove( host.frametime, cmd, active );
+-	IN_EngineAppendMove( host.frametime, cmd, active );
++	BEGIN_PART( 9, Platform_PreCreateMove());
++	GX2GL_PROF( GX2GL_PROF_IN_MOVE, clgame.dllFuncs.CL_CreateMove( host.frametime, cmd, active ));
++	GX2GL_PROF( GX2GL_PROF_IN_MOVE, IN_EngineAppendMove( host.frametime, cmd, active ));
+ 
+ 	CL_PopPMStates();
+ 
+ 	if( !cls.demoplayback )
+ 	{
+-		CL_ComputeClientInterpolationAmount( &pcmd->cmd );
++		BEGIN_PART( 10, CL_ComputeClientInterpolationAmount( &pcmd->cmd ));
+ 		pcmd->cmd.lightlevel = cl.local.light_level;
+ 		pcmd->cmd.msec = ms;
+ 	}
+@@ -831,7 +848,7 @@ static void CL_CreateCmd( void )
+ 	if( !cls.demoplayback ) cl.cmd = pcmd->cmd;
+ 
+ 	// predict all unacknowledged movements
+-	CL_PredictMovement( false );
++	GX2GL_PROF( GX2GL_PROF_IN_PREDICT, CL_PredictMovement( false ));
+ }
+ 
+ void CL_WriteUsercmd( connprotocol_t proto, sizebuf_t *msg, int from, int to )
+@@ -893,7 +910,7 @@ static void CL_WritePacket( void )
+ 	}
+ 	// cls.state can only be ca_validate or ca_active from here
+ 
+-	CL_ComputePacketLoss( );
++	BEGIN_PART( 15, CL_ComputePacketLoss( ));
+ 
+ 	MSG_Init( &buf, "ClientData", data, sizeof( data ));
+ 
+@@ -971,7 +988,7 @@ static void CL_WritePacket( void )
+ 		{
+ 			int to = ( cls.netchan.outgoing_sequence - i ) & CL_UPDATE_MASK;
+ 
+-			CL_WriteUsercmd( proto, &buf, from, to );
++			BEGIN_PART( 11, CL_WriteUsercmd( proto, &buf, from, to ));
+ 			from = to;
+ 		}
+ 
+@@ -1013,14 +1030,14 @@ static void CL_WritePacket( void )
+ 		cls.lastoutgoingcommand = cls.netchan.outgoing_sequence;
+ 		pcmd->sendsize = MSG_GetNumBytesWritten( &buf );
+ 
+-		CL_AddVoiceToDatagram();
++		BEGIN_PART( 12, CL_AddVoiceToDatagram());
+ 
+ 		// now add unreliable, if there is enough space
+ 		if( MSG_GetNumBitsWritten( &cls.datagram ) <= MSG_GetNumBitsLeft( &buf ))
+ 			MSG_WriteBits( &buf, MSG_GetData( &cls.datagram ), MSG_GetNumBitsWritten( &cls.datagram ));
+ 		MSG_Clear( &cls.datagram );
+ 
+-		Netchan_TransmitBits( &cls.netchan, MSG_GetNumBitsWritten( &buf ), MSG_GetData( &buf ));
++		BEGIN_PART( 13, Netchan_TransmitBits( &cls.netchan, MSG_GetNumBitsWritten( &buf ), MSG_GetData( &buf )));
+ 	}
+ 	else
+ 	{
+@@ -1028,7 +1045,7 @@ static void CL_WritePacket( void )
+ 	}
+ 
+ 	// update download/upload slider.
+-	Netchan_UpdateProgress( &cls.netchan );
++	BEGIN_PART( 14, Netchan_UpdateProgress( &cls.netchan ));
+ }
+ 
+ /*
+@@ -1041,10 +1058,10 @@ Called every frame to builds and sends a command packet to the server.
+ static void CL_SendCommand( void )
+ {
+ 	// we create commands even if a demo is playing,
+-	CL_CreateCmd();
++	BEGIN_PART( 20, CL_CreateCmd());
+ 
+ 	// clc_move, userinfo etc
+-	CL_WritePacket();
++	BEGIN_PART( 21, CL_WritePacket());
+ }
+ 
+ /*
+@@ -3874,24 +3891,24 @@ Host_ClientBegin
+ void Host_ClientBegin( void )
+ {
+ 	// exec console commands
+-	Cbuf_Execute ();
++	BEGIN_PART( 1, Cbuf_Execute ());
+ 
+ 	// if client is not active, do nothing
+ 	if( !cls.initialized ) return;
+ 
+ 	// finalize connection process if needs
+-	CL_CheckClientState();
++	BEGIN_PART( 2, CL_CheckClientState());
+ 
+ 	// check if logo cvars changed and re-upload if needed
+-	CL_CheckLogoChanged();
++	BEGIN_PART( 3, CL_CheckLogoChanged());
+ 
+ 	// tell the client.dll about client data
+-	CL_UpdateClientData();
++	BEGIN_PART( 4, CL_UpdateClientData());
+ 
+ 	// if running the server locally, make intentions now
+-	if( SV_Active( )) CL_SendCommand ();
++	if( SV_Active( )) CL_SendCommand (); // parts 7-15 inside
+ 
+-	SteamBroker_Frame();
++	BEGIN_PART( 6, SteamBroker_Frame());
+ }
+ 
+ /*
+@@ -3911,23 +3928,23 @@ void Host_ClientFrame( void )
+ 	// the incoming messages have been read
+ 	if( !SV_Active( )) CL_SendCommand ();
+ 
+-	clgame.dllFuncs.pfnFrame( host.frametime );
++	GX2GL_PROF( GX2GL_PROF_CL_DLL, clgame.dllFuncs.pfnFrame( host.frametime ));
+ 
+ 	// remember last received framenum
+ 	CL_SetLastUpdate ();
+ 
+ 	// read updates from server
+-	CL_ReadPackets ();
++	GX2GL_PROF( GX2GL_PROF_CL_PACKETS, CL_ReadPackets ());
+ 
+ 	// do prediction again in case we got
+ 	// a new portion updates from server
+-	CL_RedoPrediction ();
++	GX2GL_PROF( GX2GL_PROF_CL_PREDICT, CL_RedoPrediction ());
+ 
+ 	// update voice
+ 	Voice_Idle( host.frametime );
+ 
+ 	// emit visible entities
+-	CL_EmitEntities ();
++	GX2GL_PROF( GX2GL_PROF_CL_EMIT, CL_EmitEntities ());
+ 
+ 	// in case we lost connection
+ 	CL_CheckForResend ();
+@@ -3945,10 +3962,10 @@ void Host_ClientFrame( void )
  	VID_CheckChanges();
  
  	// update the screen
@@ -65,6 +265,62 @@ index 39e4f9c..7ba2ff2 100644
  
  	// play avi-files
  	SCR_RunCinematic ();
+diff --git a/engine/client/cl_tent.c b/engine/client/cl_tent.c
+index 95c85f7..0557524 100644
+--- a/engine/client/cl_tent.c
++++ b/engine/client/cl_tent.c
+@@ -23,6 +23,9 @@ GNU General Public License for more details.
+ #include "studio.h"
+ #include "wadfile.h"	// acess decal size
+ #include "sound.h"
++#if XASH_WIIU
++#include "gx2gl/gx2gl.h" // GX2GL_ProfItem: per-type times for r_speeds 6
++#endif
+ 
+ /*
+ ==============================================================
+@@ -1836,7 +1839,12 @@ CL_ParseTempEntity
+ handle temp-entity messages
+ ==============
+ */
++#if XASH_WIIU
++static int cl_te_type; // for GX2GL_ProfItem in CL_ParseTempEntity below
++static void CL_ParseTempEntity_( sizebuf_t *msg, connprotocol_t proto )
++#else
+ void CL_ParseTempEntity( sizebuf_t *msg, connprotocol_t proto )
++#endif
+ {
+ 	sizebuf_t		buf, *pbuf;
+ 	byte		msg_data[2048];
+@@ -1878,6 +1886,9 @@ void CL_ParseTempEntity( sizebuf_t *msg, connprotocol_t proto )
+ 	}
+ 
+ 	type = MSG_ReadByte( pbuf );
++#if XASH_WIIU
++	cl_te_type = type;
++#endif
+ 
+ 	switch( type )
+ 	{
+@@ -2366,6 +2377,18 @@ void CL_ParseTempEntity( sizebuf_t *msg, connprotocol_t proto )
+ 		Con_DPrintf( S_WARN "%s: overflow TE message %i\n", __func__, type );
+ }
+ 
++#if XASH_WIIU
++// time per temporary entity type for r_speeds 6
++void CL_ParseTempEntity( sizebuf_t *msg, connprotocol_t proto )
++{
++	unsigned long long t0 = GX2GL_ProfStart();
++
++	cl_te_type = 0;
++	CL_ParseTempEntity_( msg, proto );
++	GX2GL_ProfItem( GX2GL_ITEMS_TE, cl_te_type, t0 );
++}
++#endif
++
+ 
+ /*
+ ==============================================================
 diff --git a/engine/client/cl_view.c b/engine/client/cl_view.c
 index c1b3ef1..428cf16 100644
 --- a/engine/client/cl_view.c
@@ -120,7 +376,7 @@ index 8ea38dc..3181a63 100644
  		Q_strncpy( requested_cvar, r_refdll.string, sizeof( requested_cvar ));
  
 diff --git a/engine/client/input/in_joy.c b/engine/client/input/in_joy.c
-index 1da3114..f0eb75a 100644
+index 1da3114..c3769de 100644
 --- a/engine/client/input/in_joy.c
 +++ b/engine/client/input/in_joy.c
 @@ -66,8 +66,13 @@ static struct joy_touchpad_s
@@ -159,7 +415,7 @@ index 1da3114..f0eb75a 100644
  	{
  		float pitch_speed = joy_gyro_speed[0] * ( 180.0f / M_PI );
  		float yaw_speed   = joy_gyro_speed[1] * ( 180.0f / M_PI );
-@@ -777,6 +788,27 @@ static void Joy_UnbindAll_f( void )
+@@ -777,6 +788,36 @@ static void Joy_UnbindAll_f( void )
  		Key_SetBinding( key, "" );
  }
  
@@ -182,12 +438,21 @@ index 1da3114..f0eb75a 100644
 +{
 +	joy_gyro_held = false;
 +}
++
++// − on the GamePad: gyro aiming on/off (joy_gyro_enable is saved, on by default)
++static void Joy_GyroToggle_f( void )
++{
++	qboolean enable = joy_gyro_enable.value ? false : true;
++
++	Cvar_DirectSet( &joy_gyro_enable, enable ? "1" : "0" );
++	CL_CenterPrint( enable ? "Gyro aiming on" : "Gyro aiming off", 0.25f );
++}
 +#endif
 +
  static void Joy_CalibrateGyro_f( void )
  {
  	if( !joy_have_gyro.value )
-@@ -799,6 +831,11 @@ void Joy_Init( void )
+@@ -799,6 +840,12 @@ void Joy_Init( void )
  {
  	Cmd_AddRestrictedCommand( "joy_calibrate_gyro", Joy_CalibrateGyro_f, "calibrate gamepad gyroscope. You must to put gamepad on stationary surface" );
  	Cmd_AddRestrictedCommand( "joy_unbindall", Joy_UnbindAll_f, "removes all commands from all gamepad keys" );
@@ -195,15 +460,30 @@ index 1da3114..f0eb75a 100644
 +	Cmd_AddCommand( "joy_centerview", Joy_CenterView_f, "look straight ahead" );
 +	Cmd_AddCommand( "+gyro_recenter", Joy_GyroRecenterDown_f, "look straight ahead and pause gyro aiming while held" );
 +	Cmd_AddCommand( "-gyro_recenter", Joy_GyroRecenterUp_f, "resume gyro aiming" );
++	Cmd_AddCommand( "joy_gyro_toggle", Joy_GyroToggle_f, "turn gyro aiming on or off" );
 +#endif
  
  	Cvar_RegisterVariable( &joy_pitch );
  	Cvar_RegisterVariable( &joy_yaw );
 diff --git a/engine/client/input/in_keys.c b/engine/client/input/in_keys.c
-index 2203268..b949fe0 100644
+index 2203268..a376054 100644
 --- a/engine/client/input/in_keys.c
 +++ b/engine/client/input/in_keys.c
-@@ -367,6 +367,48 @@ static void Key_Unbind_f( void )
+@@ -269,6 +269,13 @@ void GAME_EXPORT Key_SetBinding( int keynum, const char *binding )
+ {
+ 	if( keynum == -1 ) return;
+ 
++#if XASH_WIIU
++	// − was "+gyro_recenter" until 2026-10-14 (the right stick levels the view too); configs saved before
++	// that would keep it, so it becomes the gyro on/off toggle that replaced it
++	if( keynum == K_BACK_BUTTON && binding && !Q_strcmp( binding, "+gyro_recenter" ))
++		binding = "joy_gyro_toggle";
++#endif
++
+ 	// free old bindings
+ 	if( keys[keynum].binding )
+ 	{
+@@ -367,6 +374,48 @@ static void Key_Unbind_f( void )
  	Key_SetBinding( b, "" );
  }
  
@@ -239,7 +519,7 @@ index 2203268..b949fe0 100644
 +		{ K_LSTICK,        "+speed" },              // walk while held
 +		{ K_RSTICK,        "joy_centerview" },
 +		{ K_START_BUTTON,  "cancelselect" },        // +: pause menu
-+		{ K_BACK_BUTTON,   "+gyro_recenter" },      // -: level the view, gyro paused while held
++		{ K_BACK_BUTTON,   "joy_gyro_toggle" },     // -: gyro aiming on/off
 +		{ K_L2_BUTTON,     "" },                    // unused by SDL2, triggers are K_JOY1/K_JOY2
 +		{ K_R2_BUTTON,     "" },
 +	};
@@ -252,7 +532,7 @@ index 2203268..b949fe0 100644
  /*
  ===================
  Key_Unbindall_f
-@@ -383,6 +425,9 @@ static void Key_Unbindall_f( void )
+@@ -383,6 +432,9 @@ static void Key_Unbindall_f( void )
  	// set some defaults
  	Key_SetBinding( K_ESCAPE, "cancelselect" );
  	Key_SetBinding( K_START_BUTTON, "cancelselect" );
@@ -262,7 +542,7 @@ index 2203268..b949fe0 100644
  }
  
  /*
-@@ -402,6 +447,9 @@ static void Key_Reset_f( void )
+@@ -402,6 +454,9 @@ static void Key_Reset_f( void )
  	// apply default values
  	for( int i = 0; i < ARRAYSIZE( keynames ); i++ )
  		Key_SetBinding( keynames[i].keynum, keynames[i].binding );
@@ -272,7 +552,7 @@ index 2203268..b949fe0 100644
  }
  
  /*
-@@ -571,6 +619,9 @@ void Key_Init( void )
+@@ -571,6 +626,9 @@ void Key_Init( void )
  	// setup default binding. "unbindall" from config.cfg will be reset it
  	for( int i = 0; i < ARRAYSIZE( keynames ); i++ )
  		Key_SetBinding( keynames[i].keynum, keynames[i].binding );
@@ -282,7 +562,7 @@ index 2203268..b949fe0 100644
  
  	Cvar_RegisterVariable( &key_rotate );
  
-@@ -957,7 +1008,7 @@ void GAME_EXPORT Key_SetKeyDest( int key_dest )
+@@ -957,7 +1015,7 @@ void GAME_EXPORT Key_SetKeyDest( int key_dest )
  		break;
  	case key_console:
  		cls.key_dest = key_console;
@@ -317,6 +597,52 @@ index 09dfa2a..0394c1e 100644
  		if( cls.key_dest == key_game )
  		{
  			clgame.dllFuncs.pfnLookEvent( yaw, pitch );
+diff --git a/engine/client/parse/cl_parse.c b/engine/client/parse/cl_parse.c
+index 29acaf7..c8ea8aa 100644
+--- a/engine/client/parse/cl_parse.c
++++ b/engine/client/parse/cl_parse.c
+@@ -21,6 +21,9 @@ GNU General Public License for more details.
+ #include "shake.h"
+ #include "input.h"
+ #include "eiface.h"
++#if XASH_WIIU
++#include "gx2gl/gx2gl.h" // GX2GL_ProfItem: per-message times for r_speeds 6
++#endif
+ 
+ #if XASH_LOW_MEMORY != 2
+ int CL_UPDATE_BACKUP = SINGLEPLAYER_BACKUP;
+@@ -2546,10 +2549,20 @@ void CL_ParseServerMessage( sizebuf_t *msg )
+ 	size_t bufStart, playerbytes;
+ 	int cmd;
+ 	int old_background;
++#if XASH_WIIU
++	int prof_cmd = -1;
++	unsigned long long prof_t = 0;
++#endif
+ 
+ 	// parse the message
+ 	while( 1 )
+ 	{
++#if XASH_WIIU
++		// the previous command is done
++		if( prof_cmd >= 0 )
++			GX2GL_ProfItem( GX2GL_ITEMS_SVC, prof_cmd, prof_t );
++		prof_cmd = -1;
++#endif
+ 		if( MSG_CheckOverflow( msg ))
+ 		{
+ 			Host_Error( "%s: overflow!\n", __func__ );
+@@ -2564,6 +2577,10 @@ void CL_ParseServerMessage( sizebuf_t *msg )
+ 			break;
+ 
+ 		cmd = MSG_ReadServerCmd( msg );
++#if XASH_WIIU
++		prof_cmd = cmd;
++		prof_t = GX2GL_ProfStart();
++#endif
+ 
+ 		// record command for debugging spew on parse problem
+ 		CL_Parse_RecordCommand( cmd, bufStart );
 diff --git a/engine/client/sound.h b/engine/client/sound.h
 index d14664e..af7a4b8 100644
 --- a/engine/client/sound.h
@@ -425,7 +751,7 @@ index 9ed62eb..a7e4e3a 100644
  	// SDL2 hands the base path over to us, SDL3 keeps ownership and frees it on quit
  	qboolean owned = XASH_SDL == 2;
 diff --git a/engine/common/host.c b/engine/common/host.c
-index f04c5f9..9e99844 100644
+index f04c5f9..7faecef 100644
 --- a/engine/common/host.c
 +++ b/engine/common/host.c
 @@ -38,6 +38,11 @@ GNU General Public License for more details.
@@ -440,9 +766,14 @@ index f04c5f9..9e99844 100644
  
  host_parm_t host;	// host parms
  static jmp_buf return_from_main_buf;
-@@ -669,8 +674,8 @@ void Host_Frame( double time )
- 	Host_InputFrame ();  // input frame
- 	Host_ClientBegin (); // begin client
+@@ -666,11 +671,11 @@ void Host_Frame( double time )
+ 	if( host.framecount == 0 )
+ 		Con_DPrintf( "Time to first frame: %.3f seconds\n", t1 - host.starttime );
+ 
+-	Host_InputFrame ();  // input frame
+-	Host_ClientBegin (); // begin client
++	GX2GL_PROF( GX2GL_PROF_INPUT, GX2GL_PROF( GX2GL_PROF_IN_EVENTS, Host_InputFrame ()));  // input frame
++	GX2GL_PROF( GX2GL_PROF_INPUT, Host_ClientBegin ()); // begin client
  	Host_GetCommands (); // dedicated in
 -	Host_ServerFrame (); // server frame
 -	Host_ClientFrame (); // client frame
@@ -631,6 +962,27 @@ index 665e608..92815ef 100644
  		break;
  	default:
  		ASSERT( 0 );
+diff --git a/engine/common/net_chan.c b/engine/common/net_chan.c
+index bd54e90..b489b9c 100644
+--- a/engine/common/net_chan.c
++++ b/engine/common/net_chan.c
+@@ -1670,7 +1670,15 @@ void Netchan_TransmitBits( netchan_t *chan, int length, const byte *data )
+ 		}
+ 	}
+ 
+-	memset( send_buf, 0, sizeof( send_buf ));
++	// only clear what this packet can use: header (cookie, sequences, qport,
++	// fragment info), reliable and unreliable payload, small-packet padding
++	// and a dword of slack for the bit writer. Clearing the whole 192 KB
++	// buffer on every send costs about 1 ms per call on slow CPUs (Wii U)
++	{
++		size_t clear = 64 + (( chan->reliable_length + length + 7 ) >> 3 ) + 32;
++
++		memset( send_buf, 0, Q_min( clear, sizeof( send_buf )));
++	}
+ 	MSG_Init( &send, "NetSend", send_buf, sizeof( send_buf ));
+ 
+ 	// prepare the packet header
 diff --git a/engine/common/net_ws.c b/engine/common/net_ws.c
 index d139dff..a496b17 100644
 --- a/engine/common/net_ws.c
@@ -817,20 +1169,23 @@ index fbcc883..15f9354 100644
  }
  
 diff --git a/engine/platform/sdl2/joy_sdl2.c b/engine/platform/sdl2/joy_sdl2.c
-index 99d45b0..da54c5d 100644
+index 99d45b0..bfa6541 100644
 --- a/engine/platform/sdl2/joy_sdl2.c
 +++ b/engine/platform/sdl2/joy_sdl2.c
-@@ -19,6 +19,9 @@ GNU General Public License for more details.
+@@ -19,6 +19,12 @@ GNU General Public License for more details.
  #include "input.h"
  #include "client.h"
  #include "platform_sdl2.h"
 +#if XASH_WIIU
 +#include <vpad/input.h>
++#include <padscore/kpad.h>
++#include <padscore/wpad.h>
++#include "gx2gl/gx2gl.h" // GX2GL_PROF_PADS
 +#endif
  
  static const int g_button_mapping[] =
  {
-@@ -78,6 +81,13 @@ static void SDLash_RestartCalibration( void )
+@@ -78,6 +84,13 @@ static void SDLash_RestartCalibration( void )
  	if( !gyrocal.data_rate )
  		gyrocal.data_rate = 10.0f;
  
@@ -844,7 +1199,7 @@ index 99d45b0..da54c5d 100644
  	Con_Printf( S_NOTE "Starting gyroscope calibration at %g data rate for %g seconds...\n", gyrocal.data_rate, CALIBRATION_TIME );
  }
  
-@@ -90,6 +100,12 @@ static void SDLash_FinalizeCalibration( void )
+@@ -90,6 +103,12 @@ static void SDLash_FinalizeCalibration( void )
  	{
  		if( !gyrocal.continuous )
  		{
@@ -857,7 +1212,7 @@ index 99d45b0..da54c5d 100644
  			Joy_SetCalibrationState( JOY_FAILED_TO_CALIBRATE );
  			Con_Printf( S_ERROR "Calibration failed, got samples %d < %d\n", gyrocal.samples, min_samples );
  			gyrocal.time = 0.0f;
-@@ -154,6 +170,15 @@ static void SDLash_GameControllerAddMappings( const char *name )
+@@ -154,6 +173,15 @@ static void SDLash_GameControllerAddMappings( const char *name )
  	Mem_Free( p );
  }
  
@@ -873,7 +1228,7 @@ index 99d45b0..da54c5d 100644
  static void SDLash_SetActiveGameController( SDL_JoystickID id )
  {
  	if( g_current_gamepad_id == id )
-@@ -191,6 +216,17 @@ static void SDLash_SetActiveGameController( SDL_JoystickID id )
+@@ -191,6 +219,17 @@ static void SDLash_SetActiveGameController( SDL_JoystickID id )
  		}
  #endif // SDL_VERSION_ATLEAST( 2, 0, 14 )
  
@@ -891,7 +1246,7 @@ index 99d45b0..da54c5d 100644
  		Joy_SetCapabilities( have_gyro, num_touchpads );
  	}
  }
-@@ -261,34 +297,164 @@ static void SDLash_GameControllerRemoved( SDL_JoystickID id )
+@@ -261,34 +300,185 @@ static void SDLash_GameControllerRemoved( SDL_JoystickID id )
  	}
  }
  
@@ -995,7 +1350,10 @@ index 99d45b0..da54c5d 100644
 +
 +int32_t __wrap_VPADRead( VPADChan chan, VPADStatus *buffers, uint32_t count, VPADReadError *outError )
 +{
++	unsigned long long t0 = GX2GL_ProfStart();
 +	int32_t read = __real_VPADRead( chan, buffers, count, outError );
++
++	GX2GL_ProfEnd( GX2GL_PROF_PADS, t0 );
 +
 +	if( chan == VPAD_CHAN_0 && read > 0 && ( !outError || *outError == VPAD_READ_SUCCESS ))
 +	{
@@ -1012,6 +1370,24 @@ index 99d45b0..da54c5d 100644
 +	}
 +
 +	return read;
++}
++
++// SDL's other controller reads, wrapped only to time them for r_speeds 6 (GX2GL_PROF_PADS)
++uint32_t __real_KPADReadEx( KPADChan chan, KPADStatus *data, uint32_t size, KPADError *error );
++WPADError __real_WPADProbe( WPADChan channel, WPADExtensionType *outExtensionType );
++
++uint32_t __wrap_KPADReadEx( KPADChan chan, KPADStatus *data, uint32_t size, KPADError *error )
++{
++	uint32_t read;
++	GX2GL_PROF( GX2GL_PROF_PADS, read = __real_KPADReadEx( chan, data, size, error ));
++	return read;
++}
++
++WPADError __wrap_WPADProbe( WPADChan channel, WPADExtensionType *outExtensionType )
++{
++	WPADError err;
++	GX2GL_PROF( GX2GL_PROF_PADS, err = __real_WPADProbe( channel, outExtensionType ));
++	return err;
 +}
 +
 +/*
@@ -1065,7 +1441,7 @@ index 99d45b0..da54c5d 100644
  #if SDL_VERSION_ATLEAST( 2, 0, 14 )
  static void SDLash_GameControllerTouchpadEvent( const SDL_ControllerTouchpadEvent *tpad, qboolean down )
  {
-@@ -363,7 +529,55 @@ void Platform_Vibrate2( float time, int val1, int val2, uint flags )
+@@ -363,7 +553,55 @@ void Platform_Vibrate2( float time, int val1, int val2, uint flags )
  		val2 = COM_RandomLong( 0x7FFF, 0xFFFF );
  
  	Uint32 ms = (Uint32)ceil( time );
@@ -1136,7 +1512,7 @@ index 3670a9d..e232ef2 100644
  //
  // sensor_sdl2.c
 diff --git a/engine/platform/sdl2/vid_sdl2.c b/engine/platform/sdl2/vid_sdl2.c
-index e85afd2..14b4505 100644
+index e85afd2..417e7e5 100644
 --- a/engine/platform/sdl2/vid_sdl2.c
 +++ b/engine/platform/sdl2/vid_sdl2.c
 @@ -43,6 +43,25 @@ struct
@@ -1357,10 +1733,10 @@ index e85afd2..14b4505 100644
  int GL_GetAttribute( int attr, int *val )
  {
 +#if XASH_WIIU
-+	// gx2gl: RGBA8 colour, 24-bit depth (32-bit float), no stencil
++	// gx2gl: RGBA8 colour, 24-bit depth (32-bit float), 8-bit stencil
 +	switch( attr )
 +	{
-+	case REF_GL_RED_SIZE: case REF_GL_GREEN_SIZE: case REF_GL_BLUE_SIZE: case REF_GL_ALPHA_SIZE: *val = 8; break;
++	case REF_GL_RED_SIZE: case REF_GL_GREEN_SIZE: case REF_GL_BLUE_SIZE: case REF_GL_ALPHA_SIZE: case REF_GL_STENCIL_SIZE: *val = 8; break;
 +	case REF_GL_DEPTH_SIZE: *val = 24; break;
 +	case REF_GL_DOUBLEBUFFER: case REF_GL_ACCELERATED_VISUAL: *val = 1; break;
 +	default: *val = 0; break;
@@ -1576,18 +1952,19 @@ index afbc183..57f00ba 100644
  
  static inline int NearestPOW( int value, qboolean roundDown )
 diff --git a/ref/gl/gl_backend.c b/ref/gl/gl_backend.c
-index 144771c..4c294c6 100644
+index 144771c..308f2ed 100644
 --- a/ref/gl/gl_backend.c
 +++ b/ref/gl/gl_backend.c
-@@ -89,6 +89,13 @@ void GL_BackendEndFrame( void )
+@@ -89,6 +89,14 @@ void GL_BackendEndFrame( void )
  		Q_snprintf( r_speeds_msg, sizeof( r_speeds_msg ), "%3i tempents\n%3i viewbeams\n%3i particles",
  			r_stats.c_active_tents_count, r_stats.c_view_beams_count, r_stats.c_particle_count );
  		break;
 +#if XASH_WIIU
 +	case 6:
 +		// gx2gl's frame timing, CPU time per frame phase and draw counts (GX2GL_STATS, src/gx2gl/gx2gl.h)
-+		Q_snprintf( r_speeds_msg, sizeof( r_speeds_msg ), "%s\n%3i wpoly, %3i epoly",
-+			(const char *)pglGetString( 0x6A00 ), r_stats.c_world_polys, r_stats.c_studio_polys );
++		Q_snprintf( r_speeds_msg, sizeof( r_speeds_msg ), "%s\n%3i wpoly, %3i epoly\n%3i tempents, %3i particles",
++			(const char *)pglGetString( 0x6A00 ), r_stats.c_world_polys, r_stats.c_studio_polys,
++			r_stats.c_active_tents_count, r_stats.c_particle_count );
 +		break;
 +#endif
  	}

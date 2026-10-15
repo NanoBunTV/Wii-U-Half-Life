@@ -186,6 +186,8 @@ target_link_options(halflife PRIVATE -Wl,--gc-sections)
 # SDL's GamePad driver is the only VPADRead caller (reading twice steals samples); the engine picks the
 # gyro out of SDL's reads (__wrap_VPADRead in joy_sdl2.c)
 target_link_options(halflife PRIVATE -Wl,--wrap=VPADRead)
+# SDL's Wii Remote reads, wrapped to time them for r_speeds 6 (joy_sdl2.c)
+target_link_options(halflife PRIVATE -Wl,--wrap=KPADReadEx -Wl,--wrap=WPADProbe)
 
 # ---------------------------------------------------------------------------------------------------
 # .wuhb content: engine data that isn't part of the game files (menu buttons, fonts, gamepad mappings)
