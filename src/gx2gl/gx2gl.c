@@ -48,7 +48,8 @@ How it works (see also Docs/ARCHITECTURE.md):
 
 #define GX2GL_UNITS        2
 #define GX2GL_RING_SIZE    ( 6 * 1024 * 1024 ) // per frame in flight
-#define GX2GL_MAX_IMM      65536
+#define GX2GL_MAX_IMM      65536 // vertices per primitive (16-bit indices)
+#define GX2GL_IMM_MIN      4096  // glBegin starts a new ring half when fewer vertices are left
 #define GX2GL_MAX_TEXTURES 65536
 
 #define MV_STACK   32
@@ -58,11 +59,10 @@ How it works (see also Docs/ARCHITECTURE.md):
 typedef struct
 {
 	float x, y, z;
-	float r, g, b, a;
+	uint32_t color; // RGBA8, R in the top byte (memory order R, G, B, A)
 	float s0, t0;
 	float s1, t1;
-	float pad;
-} gxvert_t; // 48 bytes, see the attribute setup in GX2GL_CreateContext
+} gxvert_t; // 32 bytes = one CPU cache line, see the attribute setup in GX2GL_CreateContext
 
 typedef struct
 {
@@ -120,25 +120,31 @@ static struct
 	int width, height;
 	WHBGfxShaderGroup shader;
 
-	// vertex ring: two halves, one per frame in flight
+	// vertex and index rings: two halves each, one per frame in flight
 	gxvert_t *ring;
 	uint32_t ringVerts;      // vertices per half
 	uint32_t ringUsed;       // vertices used in the current half
+	uint16_t *idxRing;
+	uint32_t idxPerHalf;     // 3 per vertex: no primitive needs more, so only the vertex ring can run out
+	uint32_t idxUsed;
 	int slot;                // current half
 	OSTime fence[2];
 	freelist_t deferred[2];  // freed once the GPU is done with that frame
 
-	// current batch
+	// current batch: batchVerts vertices from batchStart, drawn by batchIdx indices from batchIdxStart
 	gxvert_t *batchStart;
-	uint32_t batchCount;
+	uint16_t *batchIdxStart;
+	uint32_t batchVerts, batchIdx;
 	batchtype_t batchType;
 
-	// immediate mode
+	// immediate mode: vertices are written straight into the ring (immVerts), or into the spill buffer
+	// (imm) when a primitive doesn't fit in what's left of it
 	GLenum immMode;
 	int inBegin;
 	gxvert_t *imm;
-	int immCount;
-	float color[4];
+	gxvert_t *immVerts;
+	int immCount, immCap;
+	uint32_t color;
 	float texcoord[GX2GL_UNITS][2];
 
 	// client arrays
@@ -187,7 +193,9 @@ static struct
 	{
 		uint32_t frames, draws, verts;
 		OSTime waitGPU, waitFlip, periodStart;
-		char text[256];
+		OSTime gx2;                      // in GX2GL_Flush and texture uploads
+		OSTime prof[GX2GL_PROF_COUNT];   // GX2GL_ProfEnd
+		char text[512];
 	} stats;
 } g;
 
@@ -325,61 +333,50 @@ static void GX2GL_Flush( void )
 		GX2_PRIMITIVE_MODE_LINES,
 		GX2_PRIMITIVE_MODE_POINTS,
 	};
-	uint32_t size;
 
-	if( !g.batchCount )
+	if( !g.batchIdx )
 		return;
 
 	if( GX2GL_Active( ) )
 	{
+		OSTime t = OSGetSystemTime();
+		uint32_t size = g.batchVerts * sizeof( gxvert_t );
+
 		GX2GL_ApplyState();
 
-		size = g.batchCount * sizeof( gxvert_t );
 		GX2Invalidate( GX2_INVALIDATE_MODE_CPU_ATTRIBUTE_BUFFER, g.batchStart, size );
+		GX2Invalidate( GX2_INVALIDATE_MODE_CPU, g.batchIdxStart, g.batchIdx * sizeof( uint16_t ));
 		GX2SetAttribBuffer( 0, size, sizeof( gxvert_t ), g.batchStart );
-		GX2DrawEx( modes[g.batchType], g.batchCount, 0, 1 );
+		GX2DrawIndexedEx( modes[g.batchType], g.batchIdx, GX2_INDEX_TYPE_U16, g.batchIdxStart, 0, 1 );
 		g.stats.draws++;
-		g.stats.verts += g.batchCount;
+		g.stats.verts += g.batchVerts;
+		g.stats.gx2 += OSGetSystemTime() - t;
 	}
 
-	g.batchCount = 0;
+	g.batchVerts = g.batchIdx = 0;
 	g.batchStart = NULL;
+	g.batchIdxStart = NULL;
 }
 
 // a state change that affects drawing: draw what was batched with the old state
 #define STATE_CHANGE() GX2GL_Flush()
 
-// room for count more vertices in the current batch
-static gxvert_t *GX2GL_BatchAlloc( batchtype_t type, uint32_t count )
+// where the next vertex goes in the current half of the ring
+#define RING_POS() ( g.ring + g.slot * g.ringVerts + g.ringUsed )
+
+// the frame used up its half of the vertex ring: wait for the GPU and start over
+static void GX2GL_WrapRing( void )
 {
-	gxvert_t *out;
+	GX2GL_Flush();
+	if( GX2GL_Active( ))
+		GX2DrawDone();
+	g.ringUsed = g.idxUsed = 0;
+}
 
-	if( g.batchCount && g.batchType != type )
-		GX2GL_Flush();
-
-	if( g.ringUsed + count > g.ringVerts )
-	{
-		// the frame used up its half: wait for the GPU and start over
-		GX2GL_Flush();
-		if( GX2GL_Active( ) )
-			GX2DrawDone();
-		g.ringUsed = 0;
-
-		if( count > g.ringVerts )
-			return NULL;
-	}
-
-	out = g.ring + g.slot * g.ringVerts + g.ringUsed;
-
-	if( !g.batchCount )
-	{
-		g.batchStart = out;
-		g.batchType = type;
-	}
-
-	g.ringUsed += count;
-	g.batchCount += count;
-	return out;
+// zero a vertex's cache line instead of reading it from memory first: every vertex is written whole
+static inline void GX2GL_ZeroLine( void *p )
+{
+	__asm__ volatile( "dcbz 0, %0" : : "r"( p ) : "memory" );
 }
 
 static void GX2GL_ApplyTexMatrix( gxvert_t *v, int n )
@@ -404,97 +401,197 @@ static void GX2GL_ApplyTexMatrix( gxvert_t *v, int n )
 	}
 }
 
-// turn a GL primitive into the current batch
-static void GX2GL_EmitPrimitive( GLenum mode, gxvert_t *v, int n )
+// make room in the current batch for a primitive: n new vertices at v (the ring's current position)
+// and numIdx indices. Returns where the indices go; *base is the batch index of v[0]
+static uint16_t *GX2GL_BeginPrim( batchtype_t type, gxvert_t *v, int n, uint32_t numIdx, uint32_t *base )
 {
-	gxvert_t *out;
-	int i;
+	uint16_t *idx;
+
+	if( g.batchIdx && ( g.batchType != type || g.batchVerts + n > 65536 ))
+		GX2GL_Flush();
+
+	// a new batch starts on a 32-byte boundary of the index ring
+	if( !g.batchIdx )
+		g.idxUsed = ( g.idxUsed + 15 ) & ~15u;
+
+	if( g.idxUsed + numIdx > g.idxPerHalf )
+	{
+		// only the indices ran out (many small batches): the vertices stay, the index ring starts over
+		GX2GL_Flush();
+		if( GX2GL_Active( ))
+			GX2DrawDone();
+		g.idxUsed = 0;
+	}
 
 	GX2GL_ApplyTexMatrix( v, n );
 
+	idx = g.idxRing + g.slot * g.idxPerHalf + g.idxUsed;
+	if( !g.batchIdx )
+	{
+		g.batchStart = v;
+		g.batchIdxStart = idx;
+		g.batchType = type;
+	}
+	*base = g.batchVerts;
+	return idx;
+}
+
+static void GX2GL_EndPrim( int n, uint32_t numIdx )
+{
+	g.idxUsed += numIdx;
+	g.batchIdx += numIdx;
+	g.ringUsed += n;
+	g.batchVerts += n;
+}
+
+// the n vertices written at the ring's current position become a GL primitive of the current batch:
+// they stay where they are, and only the indices that turn them into triangles (or lines, points)
+// are written. n is at most GX2GL_MAX_IMM, so 16-bit indices always reach
+static void GX2GL_Commit( GLenum mode, int n )
+{
+	gxvert_t *v = RING_POS();
+	batchtype_t type = BATCH_TRIANGLES;
+	uint32_t numIdx, base;
+	uint16_t *idx;
+	int i;
+
 	switch( mode )
 	{
-	case GL_TRIANGLES:
-		n -= n % 3;
-		if( n <= 0 || !( out = GX2GL_BatchAlloc( BATCH_TRIANGLES, n )))
-			return;
-		memcpy( out, v, n * sizeof( *v ));
-		break;
+	case GL_TRIANGLES: n -= n % 3; numIdx = n; break;
 	case GL_TRIANGLE_STRIP:
-		if( n < 3 || !( out = GX2GL_BatchAlloc( BATCH_TRIANGLES, ( n - 2 ) * 3 )))
-			return;
+	case GL_TRIANGLE_FAN:
+	case GL_POLYGON: numIdx = n >= 3 ? ( n - 2 ) * 3 : 0; break;
+	case GL_QUADS: n -= n % 4; numIdx = n / 4 * 6; break;
+	case GL_QUAD_STRIP: n -= n % 2; numIdx = n >= 4 ? ( n / 2 - 1 ) * 6 : 0; break;
+	case GL_LINES: type = BATCH_LINES; n -= n % 2; numIdx = n; break;
+	case GL_LINE_STRIP: type = BATCH_LINES; numIdx = n >= 2 ? ( n - 1 ) * 2 : 0; break;
+	case GL_LINE_LOOP: type = BATCH_LINES; numIdx = n >= 2 ? ( n - 1 + ( n > 2 )) * 2 : 0; break;
+	case GL_POINTS: type = BATCH_POINTS; numIdx = n; break;
+	default: return;
+	}
+
+	if( n <= 0 || !numIdx )
+		return;
+
+	idx = GX2GL_BeginPrim( type, v, n, numIdx, &base );
+
+	switch( mode )
+	{
+	case GL_TRIANGLE_STRIP:
 		for( i = 0; i < n - 2; i++ )
 		{
 			// keep the winding of every other triangle
-			*out++ = v[( i & 1 ) ? i + 1 : i];
-			*out++ = v[( i & 1 ) ? i : i + 1];
-			*out++ = v[i + 2];
+			*idx++ = base + (( i & 1 ) ? i + 1 : i );
+			*idx++ = base + (( i & 1 ) ? i : i + 1 );
+			*idx++ = base + i + 2;
 		}
 		break;
 	case GL_TRIANGLE_FAN:
 	case GL_POLYGON:
-		if( n < 3 || !( out = GX2GL_BatchAlloc( BATCH_TRIANGLES, ( n - 2 ) * 3 )))
-			return;
 		for( i = 1; i < n - 1; i++ )
 		{
-			*out++ = v[0];
-			*out++ = v[i];
-			*out++ = v[i + 1];
+			*idx++ = base;
+			*idx++ = base + i;
+			*idx++ = base + i + 1;
 		}
 		break;
 	case GL_QUADS:
-		n -= n % 4;
-		if( n <= 0 || !( out = GX2GL_BatchAlloc( BATCH_TRIANGLES, n / 4 * 6 )))
-			return;
 		for( i = 0; i < n; i += 4 )
 		{
-			*out++ = v[i];
-			*out++ = v[i + 1];
-			*out++ = v[i + 2];
-			*out++ = v[i];
-			*out++ = v[i + 2];
-			*out++ = v[i + 3];
+			*idx++ = base + i;
+			*idx++ = base + i + 1;
+			*idx++ = base + i + 2;
+			*idx++ = base + i;
+			*idx++ = base + i + 2;
+			*idx++ = base + i + 3;
 		}
 		break;
 	case GL_QUAD_STRIP:
-		if( n < 4 || !( out = GX2GL_BatchAlloc( BATCH_TRIANGLES, ( n / 2 - 1 ) * 6 )))
-			return;
 		for( i = 0; i + 3 < n; i += 2 )
 		{
-			*out++ = v[i];
-			*out++ = v[i + 1];
-			*out++ = v[i + 3];
-			*out++ = v[i];
-			*out++ = v[i + 3];
-			*out++ = v[i + 2];
+			*idx++ = base + i;
+			*idx++ = base + i + 1;
+			*idx++ = base + i + 3;
+			*idx++ = base + i;
+			*idx++ = base + i + 3;
+			*idx++ = base + i + 2;
 		}
-		break;
-	case GL_LINES:
-		n -= n % 2;
-		if( n <= 0 || !( out = GX2GL_BatchAlloc( BATCH_LINES, n )))
-			return;
-		memcpy( out, v, n * sizeof( *v ));
 		break;
 	case GL_LINE_STRIP:
 	case GL_LINE_LOOP:
-	{
-		int segs = n - 1 + ( mode == GL_LINE_LOOP && n > 2 );
-
-		if( n < 2 || !( out = GX2GL_BatchAlloc( BATCH_LINES, segs * 2 )))
-			return;
-		for( i = 0; i < segs; i++ )
+		for( i = 0; i < (int)numIdx / 2; i++ )
 		{
-			*out++ = v[i];
-			*out++ = v[( i + 1 ) % n];
+			*idx++ = base + i;
+			*idx++ = base + ( i + 1 ) % n;
 		}
 		break;
-	}
-	case GL_POINTS:
-		if( n <= 0 || !( out = GX2GL_BatchAlloc( BATCH_POINTS, n )))
-			return;
-		memcpy( out, v, n * sizeof( *v ));
+	default: // GL_TRIANGLES, GL_LINES, GL_POINTS
+		for( i = 0; i < n; i++ )
+			*idx++ = base + i;
 		break;
 	}
+
+	GX2GL_EndPrim( n, numIdx );
+}
+
+// a primitive from a CPU buffer (immediate mode that didn't fit in the ring)
+static void GX2GL_EmitBuffer( GLenum mode, const gxvert_t *v, int n )
+{
+	if( n <= 0 )
+		return;
+	if( n > GX2GL_MAX_IMM )
+		n = GX2GL_MAX_IMM;
+
+	if( g.ringVerts - g.ringUsed < (uint32_t)n )
+		GX2GL_WrapRing();
+
+	memcpy( RING_POS(), v, n * sizeof( *v ));
+	GX2GL_Commit( mode, n );
+}
+
+// room for count vertices at the ring's current position, for client array draws
+static gxvert_t *GX2GL_RingReserve( int count )
+{
+	if( g.ringVerts - g.ringUsed < (uint32_t)count )
+		GX2GL_WrapRing();
+
+	return RING_POS();
+}
+
+// glBegin: immediate-mode vertices go straight into the ring, as many as fit in this half
+static void GX2GL_ImmStart( void )
+{
+	if( g.ringVerts - g.ringUsed < GX2GL_IMM_MIN )
+		GX2GL_WrapRing();
+
+	g.immVerts = RING_POS();
+	g.immCap = g.ringVerts - g.ringUsed;
+	if( g.immCap > GX2GL_MAX_IMM )
+		g.immCap = GX2GL_MAX_IMM;
+	g.immCount = 0;
+}
+
+// the next immediate-mode vertex, or NULL when there's no room (GX2GL_MAX_IMM per primitive)
+static gxvert_t *GX2GL_ImmNext( void )
+{
+	gxvert_t *v;
+
+	if( !g.inBegin )
+		return NULL;
+
+	if( g.immCount >= g.immCap )
+	{
+		// didn't fit in the ring: continue in the spill buffer, which glEnd copies to a fresh ring half
+		if( g.immVerts == g.imm )
+			return NULL;
+		memcpy( g.imm, g.immVerts, g.immCount * sizeof( gxvert_t ));
+		g.immVerts = g.imm;
+		g.immCap = GX2GL_MAX_IMM;
+	}
+
+	v = &g.immVerts[g.immCount++];
+	GX2GL_ZeroLine( v );
+	return v;
 }
 
 /*
@@ -768,7 +865,7 @@ static void GX2GL_ApplyState( void )
 	}
 
 	offset[0] = g.offsetUnits;
-	offset[1] = g.offsetFactor * 16.0f;
+	offset[1] = g.offsetFactor; // GX2SetPolygonOffset scales this by 16 for the register itself
 	if( g.polygonOffset && CHANGED( offset, offset ))
 	{
 		GX2SetPolygonOffset( offset[0], offset[1], offset[0], offset[1], 0.0f );
@@ -990,6 +1087,7 @@ static void GX2GL_Upload( gltex_t *t, int level, int x, int y, int w, int h, GLe
 	const uint8_t *src = pixels;
 	int srcPitch;
 	int levelW = t->width >> level, levelH = t->height >> level;
+	OSTime t0;
 
 	if( !GX2GL_Active( ) || !pixels || w <= 0 || h <= 0 || level >= t->numLevels )
 		return;
@@ -997,6 +1095,7 @@ static void GX2GL_Upload( gltex_t *t, int level, int x, int y, int w, int h, GLe
 	if( levelW < 1 ) levelW = 1;
 	if( levelH < 1 ) levelH = 1;
 
+	t0 = OSGetSystemTime();
 	GX2GL_InitSurface( &staging, w, h, 1, GX2_TILE_MODE_LINEAR_ALIGNED );
 	staging.image = GX2GL_Alloc( staging.alignment, staging.imageSize );
 	if( !staging.image )
@@ -1034,6 +1133,7 @@ static void GX2GL_Upload( gltex_t *t, int level, int x, int y, int w, int h, GLe
 		GX2Invalidate( GX2_INVALIDATE_MODE_TEXTURE, t->tex.surface.mipmaps, t->tex.surface.mipmapSize );
 
 	GX2GL_DeferFree( staging.image );
+	g.stats.gx2 += OSGetSystemTime() - t0;
 }
 
 /*
@@ -1368,11 +1468,19 @@ static void GX2GL_ReadArray( const glarray_t *a, int index, float *out, int maxC
 		out[i] = GX2GL_ReadComponent( p + i * comp, a->type, normalized );
 }
 
+// float colour (clamped to 0..1) to the vertex format's RGBA8
+static inline uint32_t GX2GL_PackColor( float r, float gr, float b, float a )
+{
+#define C( x ) (( x ) > 0.0f ? ( x ) < 1.0f ? (uint32_t)(( x ) * 255.0f + 0.5f ) & 0xFF : 255u : 0u )
+	return ( C( r ) << 24 ) | ( C( gr ) << 16 ) | ( C( b ) << 8 ) | C( a );
+#undef C
+}
+
 static void GX2GL_ArrayVertex( int index, gxvert_t *v )
 {
 	float pos[3] = { 0.0f, 0.0f, 0.0f };
-	float col[4] = { g.color[0], g.color[1], g.color[2], g.color[3] };
 	float tc[GX2GL_UNITS][2];
+	uint32_t color = g.color;
 
 	for( int unit = 0; unit < GX2GL_UNITS; unit++ )
 	{
@@ -1386,102 +1494,235 @@ static void GX2GL_ArrayVertex( int index, gxvert_t *v )
 		GX2GL_ReadArray( &g.vertexArray, index, pos, 3, 0 );
 	if( g.colorArray.enabled )
 	{
-		col[3] = 1.0f;
+		float col[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
+
 		GX2GL_ReadArray( &g.colorArray, index, col, 4, 1 );
+		color = GX2GL_PackColor( col[0], col[1], col[2], col[3] );
 	}
 
+	GX2GL_ZeroLine( v );
 	v->x = pos[0]; v->y = pos[1]; v->z = pos[2];
-	v->r = col[0]; v->g = col[1]; v->b = col[2]; v->a = col[3];
+	v->color = color;
 	v->s0 = tc[0][0]; v->t0 = tc[0][1];
 	v->s1 = tc[1][0]; v->t1 = tc[1][1];
-	v->pad = 0.0f;
 }
 
 static void glArrayElement_( GLint i )
 {
-	if( g.immCount < GX2GL_MAX_IMM )
-		GX2GL_ArrayVertex( i, &g.imm[g.immCount++] );
+	gxvert_t *v = GX2GL_ImmNext();
+
+	if( v )
+		GX2GL_ArrayVertex( i, v );
+}
+
+// the client array layout ref_gl uses (studio models): float xyz positions, float st texcoords and RGBA8
+// colours. Those are copied straight into the vertex format instead of going through GX2GL_ArrayVertex
+static int GX2GL_FastArrays( void )
+{
+	const glarray_t *va = &g.vertexArray, *ca = &g.colorArray;
+
+	if( !va->enabled || va->type != GL_FLOAT || va->size != 3 )
+		return 0;
+	if( ca->enabled && ( ca->type != GL_UNSIGNED_BYTE || ca->size != 4 ))
+		return 0;
+	for( int unit = 0; unit < GX2GL_UNITS; unit++ )
+	{
+		const glarray_t *ta = &g.texcoordArray[unit];
+
+		if( ta->enabled && ( ta->type != GL_FLOAT || ta->size != 2 ))
+			return 0;
+	}
+	return 1;
+}
+
+static void GX2GL_FastArrayVertices( gxvert_t *out, int first, int count )
+{
+	const glarray_t *va = &g.vertexArray, *ca = &g.colorArray;
+	const glarray_t *ta0 = &g.texcoordArray[0], *ta1 = &g.texcoordArray[1];
+	const int vs = va->stride ? va->stride : 12, cs = ca->stride ? ca->stride : 4;
+	const int ts0 = ta0->stride ? ta0->stride : 8, ts1 = ta1->stride ? ta1->stride : 8;
+	const uint8_t *vp = (const uint8_t *)va->ptr + first * vs;
+	const uint8_t *cp = ca->enabled ? (const uint8_t *)ca->ptr + first * cs : NULL;
+	const uint8_t *tp0 = ta0->enabled ? (const uint8_t *)ta0->ptr + first * ts0 : NULL;
+	const uint8_t *tp1 = ta1->enabled ? (const uint8_t *)ta1->ptr + first * ts1 : NULL;
+
+	for( int i = 0; i < count; i++, out++, vp += vs )
+	{
+		const float *pos = (const float *)vp;
+
+		GX2GL_ZeroLine( out );
+		out->x = pos[0]; out->y = pos[1]; out->z = pos[2];
+
+		if( cp )
+		{
+			// R, G, B, A bytes are already the colour's big-endian word
+			out->color = ( (uint32_t)cp[0] << 24 ) | ( (uint32_t)cp[1] << 16 ) | ( (uint32_t)cp[2] << 8 ) | cp[3];
+			cp += cs;
+		}
+		else out->color = g.color;
+
+		if( tp0 )
+		{
+			out->s0 = ((const float *)tp0)[0]; out->t0 = ((const float *)tp0)[1];
+			tp0 += ts0;
+		}
+		else
+		{
+			out->s0 = g.texcoord[0][0]; out->t0 = g.texcoord[0][1];
+		}
+
+		if( tp1 )
+		{
+			out->s1 = ((const float *)tp1)[0]; out->t1 = ((const float *)tp1)[1];
+			tp1 += ts1;
+		}
+		else
+		{
+			out->s1 = g.texcoord[1][0]; out->t1 = g.texcoord[1][1];
+		}
+	}
+}
+
+static void GX2GL_ArrayVertices( gxvert_t *out, int first, int count )
+{
+	if( GX2GL_FastArrays( ))
+	{
+		GX2GL_FastArrayVertices( out, first, count );
+		return;
+	}
+
+	for( int i = 0; i < count; i++ )
+		GX2GL_ArrayVertex( first + i, &out[i] );
 }
 
 static void glDrawArrays_( GLenum mode, GLint first, GLsizei count )
 {
+	if( count <= 0 )
+		return;
 	if( count > GX2GL_MAX_IMM )
 		count = GX2GL_MAX_IMM;
 
-	for( int i = 0; i < count; i++ )
-		GX2GL_ArrayVertex( first + i, &g.imm[i] );
+	GX2GL_ArrayVertices( GX2GL_RingReserve( count ), first, count );
+	GX2GL_Commit( mode, count );
+}
 
-	GX2GL_EmitPrimitive( mode, g.imm, count );
+static uint32_t GX2GL_Index( GLenum type, const GLvoid *indices, int i )
+{
+	switch( type )
+	{
+	case GL_UNSIGNED_BYTE: return ((const uint8_t *)indices)[i];
+	case GL_UNSIGNED_SHORT: return ((const uint16_t *)indices)[i];
+	default: return ((const uint32_t *)indices)[i];
+	}
+}
+
+// start..end: the range of vertices the indices use (inclusive)
+static void GX2GL_DrawElements( GLenum mode, uint32_t start, uint32_t end, GLsizei count, GLenum type, const GLvoid *indices )
+{
+	gxvert_t *v;
+
+	if( count <= 0 )
+		return;
+	if( count > GX2GL_MAX_IMM )
+		count = GX2GL_MAX_IMM;
+
+	if(( mode == GL_TRIANGLES || mode == GL_LINES || mode == GL_POINTS ) && end >= start && end - start < GX2GL_MAX_IMM )
+	{
+		// the used vertices once, then the indices as they are: no vertex is converted twice
+		batchtype_t btype = mode == GL_TRIANGLES ? BATCH_TRIANGLES : mode == GL_LINES ? BATCH_LINES : BATCH_POINTS;
+		int n = end - start + 1;
+		uint32_t base;
+		uint16_t *idx;
+
+		count -= count % ( mode == GL_TRIANGLES ? 3 : mode == GL_LINES ? 2 : 1 );
+		if( count <= 0 )
+			return;
+
+		v = GX2GL_RingReserve( n );
+		GX2GL_ArrayVertices( v, start, n );
+		idx = GX2GL_BeginPrim( btype, v, n, count, &base );
+		for( int i = 0; i < count; i++ )
+		{
+			uint32_t index = GX2GL_Index( type, indices, i ) - start;
+
+			idx[i] = base + ( index < (uint32_t)n ? index : 0 );
+		}
+		GX2GL_EndPrim( n, count );
+		return;
+	}
+
+	// other primitives: one vertex per index
+	v = GX2GL_RingReserve( count );
+	for( int i = 0; i < count; i++ )
+		GX2GL_ArrayVertices( &v[i], GX2GL_Index( type, indices, i ), 1 );
+
+	GX2GL_Commit( mode, count );
 }
 
 static void glDrawElements_( GLenum mode, GLsizei count, GLenum type, const GLvoid *indices )
 {
-	if( count > GX2GL_MAX_IMM )
-		count = GX2GL_MAX_IMM;
+	uint32_t start = 0xFFFFFFFF, end = 0;
 
 	for( int i = 0; i < count; i++ )
 	{
-		int index;
+		uint32_t index = GX2GL_Index( type, indices, i );
 
-		switch( type )
-		{
-		case GL_UNSIGNED_BYTE: index = ((const uint8_t *)indices)[i]; break;
-		case GL_UNSIGNED_SHORT: index = ((const uint16_t *)indices)[i]; break;
-		default: index = ((const uint32_t *)indices)[i]; break;
-		}
-
-		GX2GL_ArrayVertex( index, &g.imm[i] );
+		if( index < start ) start = index;
+		if( index > end ) end = index;
 	}
 
-	GX2GL_EmitPrimitive( mode, g.imm, count );
+	GX2GL_DrawElements( mode, start, end, count, type, indices );
 }
 
 static void glDrawRangeElements_( GLenum mode, GLuint start, GLuint end, GLsizei count, GLenum type, const GLvoid *indices )
 {
-	(void)start; (void)end;
-	glDrawElements_( mode, count, type, indices );
+	GX2GL_DrawElements( mode, start, end, count, type, indices );
 }
 
 // immediate mode
 static void glBegin_( GLenum mode )
 {
 	g.immMode = mode;
-	g.immCount = 0;
 	g.inBegin = 1;
+	GX2GL_ImmStart();
 }
 
 static void glEnd_( void )
 {
+	if( !g.inBegin )
+		return;
+
 	g.inBegin = 0;
-	GX2GL_EmitPrimitive( g.immMode, g.imm, g.immCount );
+	if( g.immVerts == g.imm )
+		GX2GL_EmitBuffer( g.immMode, g.imm, g.immCount );
+	else
+		GX2GL_Commit( g.immMode, g.immCount );
 	g.immCount = 0;
 }
 
 static void GX2GL_Vertex( float x, float y, float z )
 {
-	gxvert_t *v;
+	gxvert_t *v = GX2GL_ImmNext();
 
-	if( g.immCount >= GX2GL_MAX_IMM )
+	if( !v )
 		return;
 
-	v = &g.imm[g.immCount++];
 	v->x = x; v->y = y; v->z = z;
-	v->r = g.color[0]; v->g = g.color[1]; v->b = g.color[2]; v->a = g.color[3];
+	v->color = g.color;
 	v->s0 = g.texcoord[0][0]; v->t0 = g.texcoord[0][1];
 	v->s1 = g.texcoord[1][0]; v->t1 = g.texcoord[1][1];
-	v->pad = 0.0f;
 }
 
 static void glVertex2f_( GLfloat x, GLfloat y ) { GX2GL_Vertex( x, y, 0.0f ); }
 static void glVertex3f_( GLfloat x, GLfloat y, GLfloat z ) { GX2GL_Vertex( x, y, z ); }
 static void glVertex3fv_( const GLfloat *v ) { GX2GL_Vertex( v[0], v[1], v[2] ); }
 
-static void glColor4f_( GLfloat r, GLfloat gr, GLfloat b, GLfloat a ) { g.color[0] = r; g.color[1] = gr; g.color[2] = b; g.color[3] = a; }
+static void glColor4f_( GLfloat r, GLfloat gr, GLfloat b, GLfloat a ) { g.color = GX2GL_PackColor( r, gr, b, a ); }
 static void glColor3f_( GLfloat r, GLfloat gr, GLfloat b ) { glColor4f_( r, gr, b, 1.0f ); }
 static void glColor3fv_( const GLfloat *v ) { glColor4f_( v[0], v[1], v[2], 1.0f ); }
 static void glColor4fv_( const GLfloat *v ) { glColor4f_( v[0], v[1], v[2], v[3] ); }
-static void glColor3ub_( GLubyte r, GLubyte gr, GLubyte b ) { glColor4f_( r / 255.0f, gr / 255.0f, b / 255.0f, 1.0f ); }
-static void glColor4ub_( GLubyte r, GLubyte gr, GLubyte b, GLubyte a ) { glColor4f_( r / 255.0f, gr / 255.0f, b / 255.0f, a / 255.0f ); }
+static void glColor3ub_( GLubyte r, GLubyte gr, GLubyte b ) { g.color = ( (uint32_t)r << 24 ) | ( (uint32_t)gr << 16 ) | ( (uint32_t)b << 8 ) | 0xFF; }
+static void glColor4ub_( GLubyte r, GLubyte gr, GLubyte b, GLubyte a ) { g.color = ( (uint32_t)r << 24 ) | ( (uint32_t)gr << 16 ) | ( (uint32_t)b << 8 ) | a; }
 static void glColor4ubv_( const GLubyte *v ) { glColor4ub_( v[0], v[1], v[2], v[3] ); }
 
 static void GX2GL_TexCoord( int unit, float s, float t )
@@ -2079,7 +2320,7 @@ context
 */
 static void GX2GL_SetDefaultState( void )
 {
-	g.color[0] = g.color[1] = g.color[2] = g.color[3] = 1.0f;
+	g.color = 0xFFFFFFFF;
 	g.matrixMode = GL_MODELVIEW;
 	Mat_Identity( g.mv[0] );
 	Mat_Identity( g.proj[0] );
@@ -2128,12 +2369,14 @@ int GX2GL_CreateContext( int width, int height )
 	g.swapInterval = 1;
 
 	g.textures = calloc( GX2GL_MAX_TEXTURES, sizeof( *g.textures ));
-	g.imm = malloc( GX2GL_MAX_IMM * sizeof( *g.imm ));
-	g.ring = GX2GL_Alloc( GX2_VERTEX_BUFFER_ALIGNMENT, 2 * GX2GL_RING_SIZE );
-	g.ctx = GX2GL_Alloc( GX2_CONTEXT_STATE_ALIGNMENT, sizeof( *g.ctx ));
-	if( !g.textures || !g.imm || !g.ring || !g.ctx )
-		goto fail;
 	g.ringVerts = GX2GL_RING_SIZE / sizeof( gxvert_t );
+	g.idxPerHalf = g.ringVerts * 3;
+	g.imm = GX2GL_Alloc( 32, GX2GL_MAX_IMM * sizeof( *g.imm )); // cache-line aligned, see GX2GL_ZeroLine
+	g.ring = GX2GL_Alloc( GX2_VERTEX_BUFFER_ALIGNMENT, 2 * GX2GL_RING_SIZE );
+	g.idxRing = GX2GL_Alloc( GX2_INDEX_BUFFER_ALIGNMENT, 2 * g.idxPerHalf * sizeof( uint16_t ));
+	g.ctx = GX2GL_Alloc( GX2_CONTEXT_STATE_ALIGNMENT, sizeof( *g.ctx ));
+	if( !g.textures || !g.imm || !g.ring || !g.idxRing || !g.ctx )
+		goto fail;
 
 	// render targets
 	g.cb.surface.dim = GX2_SURFACE_DIM_TEXTURE_2D;
@@ -2173,9 +2416,9 @@ int GX2GL_CreateContext( int width, int height )
 	// shaders: position, colour, texcoord 0, texcoord 1, see gxvert_t
 	if( !WHBGfxLoadGFDShaderGroup( &g.shader, 0, gx2gl_shader_fixed )
 		|| !WHBGfxInitShaderAttribute( &g.shader, "a_position", 0, 0, GX2_ATTRIB_FORMAT_FLOAT_32_32_32 )
-		|| !WHBGfxInitShaderAttribute( &g.shader, "a_color", 0, 12, GX2_ATTRIB_FORMAT_FLOAT_32_32_32_32 )
-		|| !WHBGfxInitShaderAttribute( &g.shader, "a_texcoord0", 0, 28, GX2_ATTRIB_FORMAT_FLOAT_32_32 )
-		|| !WHBGfxInitShaderAttribute( &g.shader, "a_texcoord1", 0, 36, GX2_ATTRIB_FORMAT_FLOAT_32_32 )
+		|| !WHBGfxInitShaderAttribute( &g.shader, "a_color", 0, 12, GX2_ATTRIB_FORMAT_UNORM_8_8_8_8 )
+		|| !WHBGfxInitShaderAttribute( &g.shader, "a_texcoord0", 0, 16, GX2_ATTRIB_FORMAT_FLOAT_32_32 )
+		|| !WHBGfxInitShaderAttribute( &g.shader, "a_texcoord1", 0, 24, GX2_ATTRIB_FORMAT_FLOAT_32_32 )
 		|| !WHBGfxInitFetchShader( &g.shader ))
 	{
 		WHBLogPrint( "gx2gl: failed to load the shaders" );
@@ -2245,6 +2488,7 @@ void GX2GL_DestroyContext( void )
 	free( g.db.surface.image );
 	free( g.ctx );
 	free( g.ring );
+	free( g.idxRing );
 	free( g.imm );
 
 	memset( &g, 0, sizeof( g ));
@@ -2256,12 +2500,24 @@ void GX2GL_SetSwapInterval( int interval )
 	GX2SetSwapInterval( interval );
 }
 
+unsigned long long GX2GL_ProfStart( void )
+{
+	return (unsigned long long)OSGetSystemTime();
+}
+
+void GX2GL_ProfEnd( int phase, unsigned long long start )
+{
+	if( phase >= 0 && phase < GX2GL_PROF_COUNT )
+		g.stats.prof[phase] += OSGetSystemTime() - (OSTime)start;
+}
+
 // averages for r_speeds 6, every half second. "cpu" is the frame time without the two waits: when it's
-// above 16.7 ms the CPU limits the frame rate, when "gpu" is large the GPU does
+// above 16.7 ms the CPU limits the frame rate, when "gpu wait" is large the GPU does. The phases below
+// it show where the CPU time goes (gx2gl.h); "gx2gl" is the part spent sending draws and uploads
 static void GX2GL_UpdateStats( void )
 {
 	OSTime now = OSGetSystemTime();
-	float frames, total;
+	float frames, total, waits, p[GX2GL_PROF_COUNT];
 
 	g.stats.frames++;
 	if( !g.stats.periodStart )
@@ -2270,18 +2526,31 @@ static void GX2GL_UpdateStats( void )
 	if( now - g.stats.periodStart < (OSTime)OSMillisecondsToTicks( 500 ))
 		return;
 
+#define MS( ticks ) ( (float)OSTicksToMicroseconds( ticks ) / 1000.0f / frames )
 	frames = (float)g.stats.frames;
-	total = (float)OSTicksToMicroseconds( now - g.stats.periodStart ) / 1000.0f / frames;
+	total = MS( now - g.stats.periodStart );
+	waits = MS( g.stats.waitGPU + g.stats.waitFlip );
+	for( int i = 0; i < GX2GL_PROF_COUNT; i++ )
+		p[i] = MS( g.stats.prof[i] );
+
 	snprintf( g.stats.text, sizeof( g.stats.text ),
-		"frame %.1f ms\ncpu %.1f, gpu wait %.1f\nvsync wait %.1f\n%u draws, %u verts",
-		total,
-		total - (float)OSTicksToMicroseconds( g.stats.waitGPU + g.stats.waitFlip ) / 1000.0f / frames,
-		(float)OSTicksToMicroseconds( g.stats.waitGPU ) / 1000.0f / frames,
-		(float)OSTicksToMicroseconds( g.stats.waitFlip ) / 1000.0f / frames,
+		"frame %.1f ms: cpu %.1f\ngpu wait %.1f, vsync wait %.1f\n"
+		"game %.1f, client %.1f, sound %.1f\n"
+		"3d view %.1f: world %.1f, entities %.1f\n"
+		"studio models %.1f (vertices %.1f)\n"
+		"hud/menu %.1f, gx2gl %.1f\n"
+		"%u draws, %u verts",
+		total, total - waits, MS( g.stats.waitGPU ), MS( g.stats.waitFlip ),
+		p[GX2GL_PROF_SERVER], p[GX2GL_PROF_CLIENT] - p[GX2GL_PROF_SOUND] - p[GX2GL_PROF_SCREEN], p[GX2GL_PROF_SOUND],
+		p[GX2GL_PROF_VIEW], p[GX2GL_PROF_WORLD], p[GX2GL_PROF_ENTITIES],
+		p[GX2GL_PROF_STUDIO], p[GX2GL_PROF_STUDIO_POINTS],
+		p[GX2GL_PROF_SCREEN] - p[GX2GL_PROF_VIEW] - waits, MS( g.stats.gx2 ),
 		(unsigned)( g.stats.draws / g.stats.frames ), (unsigned)( g.stats.verts / g.stats.frames ));
+#undef MS
 
 	g.stats.frames = g.stats.draws = g.stats.verts = 0;
-	g.stats.waitGPU = g.stats.waitFlip = 0;
+	g.stats.waitGPU = g.stats.waitFlip = g.stats.gx2 = 0;
+	memset( g.stats.prof, 0, sizeof( g.stats.prof ));
 	g.stats.periodStart = now;
 }
 

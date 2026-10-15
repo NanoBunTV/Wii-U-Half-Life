@@ -24,10 +24,22 @@ index 7cd9c1f..4b18038 100644
  	#define DEFAULT_TOUCH_ENABLE "1"
  #elif XASH_MOBILE_PLATFORM
 diff --git a/engine/client/cl_main.c b/engine/client/cl_main.c
-index 39e4f9c..099092b 100644
+index 39e4f9c..7ba2ff2 100644
 --- a/engine/client/cl_main.c
 +++ b/engine/client/cl_main.c
-@@ -62,7 +62,12 @@ CVAR_DEFINE_AUTO( cl_nosmooth, "0", 0, "disable smooth up stair climbing" );
+@@ -24,6 +24,11 @@ GNU General Public License for more details.
+ #include "vid_common.h"
+ #include "pm_local.h"
+ #include "multi_emulator.h"
++#if XASH_WIIU
++#include "gx2gl/gx2gl.h" // GX2GL_PROF: frame phase times for r_speeds 6
++#else
++#define GX2GL_PROF( phase, call ) call
++#endif
+ 
+ #define CL_CONNECTION_TIMEOUT 15.0f
+ #define CL_CONNECTION_RETRIES 5
+@@ -62,7 +67,12 @@ CVAR_DEFINE_AUTO( cl_nosmooth, "0", 0, "disable smooth up stair climbing" );
  CVAR_DEFINE_AUTO( cl_smoothtime, "0.1", 0, "time to smooth up" );
  CVAR_DEFINE_AUTO( cl_clockreset, "0.1", 0, "frametime delta maximum value before reset" );
  static CVAR_DEFINE_AUTO( cl_fixtimerate, "7.5", 0, "time in msec to client clock adjusting" );
@@ -40,6 +52,19 @@ index 39e4f9c..099092b 100644
  CVAR_DEFINE_AUTO( hud_fontrender, "0", FCVAR_ARCHIVE, "hud font render mode (0: additive, 1: holes, 2: trans)" );
  CVAR_DEFINE_AUTO( hud_scale, "0", FCVAR_ARCHIVE|FCVAR_LATCH, "scale hud at current resolution" );
  CVAR_DEFINE_AUTO( hud_scale_minimal_width, "640", FCVAR_ARCHIVE|FCVAR_LATCH, "if hud_scale results in a HUD virtual screen smaller than this value, it won't be applied" );
+@@ -3945,10 +3955,10 @@ void Host_ClientFrame( void )
+ 	VID_CheckChanges();
+ 
+ 	// update the screen
+-	SCR_UpdateScreen ();
++	GX2GL_PROF( GX2GL_PROF_SCREEN, SCR_UpdateScreen ());
+ 
+ 	// update audio
+-	SND_UpdateSound ();
++	GX2GL_PROF( GX2GL_PROF_SOUND, SND_UpdateSound ());
+ 
+ 	// play avi-files
+ 	SCR_RunCinematic ();
 diff --git a/engine/client/cl_view.c b/engine/client/cl_view.c
 index c1b3ef1..428cf16 100644
 --- a/engine/client/cl_view.c
@@ -400,10 +425,33 @@ index 9ed62eb..a7e4e3a 100644
  	// SDL2 hands the base path over to us, SDL3 keeps ownership and frees it on quit
  	qboolean owned = XASH_SDL == 2;
 diff --git a/engine/common/host.c b/engine/common/host.c
-index f04c5f9..a02cfe4 100644
+index f04c5f9..9e99844 100644
 --- a/engine/common/host.c
 +++ b/engine/common/host.c
-@@ -995,6 +995,39 @@ static void Host_CheckGameLibraries( void )
+@@ -38,6 +38,11 @@ GNU General Public License for more details.
+ #include "tests.h"
+ #include "library.h"
+ #include "platform/platform.h"
++#if XASH_WIIU
++#include "gx2gl/gx2gl.h" // GX2GL_PROF: frame phase times for r_speeds 6
++#else
++#define GX2GL_PROF( phase, call ) call
++#endif
+ 
+ host_parm_t host;	// host parms
+ static jmp_buf return_from_main_buf;
+@@ -669,8 +674,8 @@ void Host_Frame( double time )
+ 	Host_InputFrame ();  // input frame
+ 	Host_ClientBegin (); // begin client
+ 	Host_GetCommands (); // dedicated in
+-	Host_ServerFrame (); // server frame
+-	Host_ClientFrame (); // client frame
++	GX2GL_PROF( GX2GL_PROF_SERVER, Host_ServerFrame ()); // server frame
++	GX2GL_PROF( GX2GL_PROF_CLIENT, Host_ClientFrame ()); // client frame
+ 	HTTP_Run();			 // both server and client
+ 	XRcon_Frame();
+ 
+@@ -995,6 +1000,39 @@ static void Host_CheckGameLibraries( void )
  #endif // XASH_INTERNAL_GAMELIBS
  }
  
@@ -443,7 +491,7 @@ index f04c5f9..a02cfe4 100644
  /*
  =================
  Host_InitCommon
-@@ -1274,6 +1307,9 @@ int EXPORT Host_Main( int argc, char **argv, const char *progname, int bChangeGa
+@@ -1274,6 +1312,9 @@ int EXPORT Host_Main( int argc, char **argv, const char *progname, int bChangeGa
  	case HOST_NORMAL:
  #ifdef _WIN32
  		Wcon_ShowConsole( false ); // hide console
@@ -453,7 +501,7 @@ index f04c5f9..a02cfe4 100644
  #endif
  		// execute startup config and cmdline
  		if( FS_FileExists( va( "%s.rc", progname ), false )) // e.g. valve.rc
-@@ -1293,6 +1329,10 @@ int EXPORT Host_Main( int argc, char **argv, const char *progname, int bChangeGa
+@@ -1293,6 +1334,10 @@ int EXPORT Host_Main( int argc, char **argv, const char *progname, int bChangeGa
  		// exec all files from userconfig.d
  		Cbuf_AddText( "userconfigd\n" );
  		Cbuf_Execute();
@@ -1463,21 +1511,108 @@ index 712c3e4..fd17eee 100644
  #endif
  
 diff --git a/ref/gl/gl_backend.c b/ref/gl/gl_backend.c
-index 144771c..5034cd7 100644
+index 144771c..4c294c6 100644
 --- a/ref/gl/gl_backend.c
 +++ b/ref/gl/gl_backend.c
-@@ -89,6 +89,14 @@ void GL_BackendEndFrame( void )
+@@ -89,6 +89,13 @@ void GL_BackendEndFrame( void )
  		Q_snprintf( r_speeds_msg, sizeof( r_speeds_msg ), "%3i tempents\n%3i viewbeams\n%3i particles",
  			r_stats.c_active_tents_count, r_stats.c_view_beams_count, r_stats.c_particle_count );
  		break;
 +#if XASH_WIIU
 +	case 6:
-+		// gx2gl's frame timing and draw counts (GX2GL_STATS, src/gx2gl/gx2gl.h) plus the world's CPU time
-+		Q_snprintf( r_speeds_msg, sizeof( r_speeds_msg ), "%s\nworld %.1f + %.1f ms\n%3i wpoly, %3i epoly",
-+			(const char *)pglGetString( 0x6A00 ), r_stats.t_world_node * 1000.0, r_stats.t_world_draw * 1000.0,
-+			r_stats.c_world_polys, r_stats.c_studio_polys );
++		// gx2gl's frame timing, CPU time per frame phase and draw counts (GX2GL_STATS, src/gx2gl/gx2gl.h)
++		Q_snprintf( r_speeds_msg, sizeof( r_speeds_msg ), "%s\n%3i wpoly, %3i epoly",
++			(const char *)pglGetString( 0x6A00 ), r_stats.c_world_polys, r_stats.c_studio_polys );
 +		break;
 +#endif
  	}
  
  	memset( &r_stats, 0, sizeof( r_stats ));
+diff --git a/ref/gl/gl_rmain.c b/ref/gl/gl_rmain.c
+index 97b1211..b8cb087 100644
+--- a/ref/gl/gl_rmain.c
++++ b/ref/gl/gl_rmain.c
+@@ -18,6 +18,11 @@ GNU General Public License for more details.
+ #include "library.h"
+ #include "beamdef.h"
+ #include "entity_types.h"
++#if XASH_WIIU
++#include "gx2gl/gx2gl.h" // GX2GL_PROF: frame phase times for r_speeds 6
++#else
++#define GX2GL_PROF( phase, call ) call
++#endif
+ 
+ 
+ #define IsLiquidContents( cnt )	( cnt == CONTENTS_WATER || cnt == CONTENTS_SLIME || cnt == CONTENTS_LAVA )
+@@ -980,12 +985,12 @@ void R_RenderScene( void )
+ 		R_AnimateRipples();
+ 
+ 	R_CheckGLFog();
+-	R_DrawWorld();
++	GX2GL_PROF( GX2GL_PROF_WORLD, R_DrawWorld());
+ 	R_CheckFog();
+ 
+ 	gEngfuncs.CL_ExtraUpdate ();	// don't let sound get messed up if going slow
+ 
+-	R_DrawEntitiesOnList();
++	GX2GL_PROF( GX2GL_PROF_ENTITIES, R_DrawEntitiesOnList());
+ 
+ 	R_DrawWaterSurfaces();
+ }
+@@ -1119,7 +1124,7 @@ void R_RenderFrame( const ref_viewpass_t *rvp )
+ 		R_RunViewmodelEvents();
+ 
+ 	tr.realframecount++; // right called after viewmodel events
+-	R_RenderScene();
++	GX2GL_PROF( GX2GL_PROF_VIEW, R_RenderScene());
+ 
+ 	return;
+ }
+diff --git a/ref/gl/gl_studio.c b/ref/gl/gl_studio.c
+index 39873fb..ce04594 100644
+--- a/ref/gl/gl_studio.c
++++ b/ref/gl/gl_studio.c
+@@ -20,6 +20,11 @@ GNU General Public License for more details.
+ #include "triangleapi.h"
+ #include "studio.h"
+ #include "pm_local.h"
++#if XASH_WIIU
++#include "gx2gl/gx2gl.h" // GX2GL_PROF: frame phase times for r_speeds 6
++#else
++#define GX2GL_PROF( phase, call ) call
++#endif
+ 
+ #define EVENT_CLIENT	5000	// less than this value it's a server-side studio events
+ #define MAX_LOCALLIGHTS	4
+@@ -1945,7 +1950,15 @@ R_StudioDrawPoints
+ 
+ ===============
+ */
++static void R_StudioDrawPoints_( void );
++
++// vertex transform, lighting and drawing: the part of R_StudioDrawModelInternal in ref_gl
+ static void R_StudioDrawPoints( void )
++{
++	GX2GL_PROF( GX2GL_PROF_STUDIO_POINTS, R_StudioDrawPoints_( ));
++}
++
++static void R_StudioDrawPoints_( void )
+ {
+ 	float		shellscale = 0.0f;
+ 	qboolean		need_sort = false;
+@@ -3203,7 +3216,15 @@ static int R_StudioDrawModel( int flags )
+ R_StudioDrawModelInternal
+ =================
+ */
++static void R_StudioDrawModelInternal_( cl_entity_t *e, int flags );
++
++// the model's whole time (the game's bone setup and lighting included) for r_speeds 6 on Wii U
+ static void R_StudioDrawModelInternal( cl_entity_t *e, int flags )
++{
++	GX2GL_PROF( GX2GL_PROF_STUDIO, R_StudioDrawModelInternal_( e, flags ));
++}
++
++static void R_StudioDrawModelInternal_( cl_entity_t *e, int flags )
+ {
+ 	if( !FBitSet( RI.rvp.flags, RF_DRAW_WORLD ))
+ 	{

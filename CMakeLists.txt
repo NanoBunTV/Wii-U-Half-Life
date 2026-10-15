@@ -106,7 +106,8 @@ xash_static_library(ref_soft OBJLIBS ref_soft_obj EXPORTS_FILE "${CMAKE_SOURCE_D
 # ---------------------------------------------------------------------------------------------------
 file(GLOB REF_GL_SOURCES "${XASH_DIR}/ref/common/*.c" "${XASH_DIR}/ref/gl/*.c" "${XASH_DIR}/ref/gl/gl2_shim/*.c")
 add_library(ref_gl_obj OBJECT ${REF_GL_SOURCES})
-target_include_directories(ref_gl_obj PRIVATE "${XASH_DIR}/ref/gl" "${XASH_DIR}/ref/common" ${XASH_ENGINE_INCLUDES})
+# src: gx2gl.h for the frame phase timing (GX2GL_PROF)
+target_include_directories(ref_gl_obj PRIVATE "${XASH_DIR}/ref/gl" "${XASH_DIR}/ref/common" ${XASH_ENGINE_INCLUDES} "${CMAKE_SOURCE_DIR}/src")
 target_compile_definitions(ref_gl_obj PRIVATE REF_DLL=1)
 xash_static_library(ref_gl OBJLIBS ref_gl_obj EXPORTS_FILE "${CMAKE_SOURCE_DIR}/exports/ref.txt")
 

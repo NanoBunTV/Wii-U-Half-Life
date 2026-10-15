@@ -29,6 +29,27 @@ void *GX2GL_GetProcAddress( const char *name );
 // ref_gl's r_speeds 6 on Wii U (the value is from GL's reserved range, not used by real GL)
 #define GX2GL_STATS 0x6A00
 
+// CPU time of the frame's phases for the same display. The engine and ref_gl (XASH_WIIU code) wrap a
+// phase in t = GX2GL_ProfStart( ) ... GX2GL_ProfEnd( phase, t ); phases may contain other phases
+enum
+{
+	GX2GL_PROF_SERVER,   // Host_ServerFrame (game code, physics)
+	GX2GL_PROF_CLIENT,   // Host_ClientFrame, includes SOUND and SCREEN
+	GX2GL_PROF_SOUND,    // SND_UpdateSound (mixing)
+	GX2GL_PROF_SCREEN,   // SCR_UpdateScreen, includes the 3D view, the HUD, menus and the swap's waits
+	GX2GL_PROF_VIEW,     // R_RenderFrame: the 3D view
+	GX2GL_PROF_WORLD,    // R_DrawWorld
+	GX2GL_PROF_ENTITIES, // R_DrawEntitiesOnList (models, sprites, particles, beams, view model)
+	GX2GL_PROF_STUDIO,   // studio models, all of it (also the game's bone setup in client.dll)
+	GX2GL_PROF_STUDIO_POINTS, // the models' vertex transform, lighting and drawing (R_StudioDrawPoints)
+	GX2GL_PROF_COUNT
+};
+unsigned long long GX2GL_ProfStart( void );
+void GX2GL_ProfEnd( int phase, unsigned long long start );
+
+// GX2GL_PROF( GX2GL_PROF_SERVER, Host_ServerFrame( )); other platforms define it as just the call
+#define GX2GL_PROF( phase, call ) do { unsigned long long prof_t_ = GX2GL_ProfStart( ); call; GX2GL_ProfEnd( phase, prof_t_ ); } while( 0 )
+
 #ifdef __cplusplus
 }
 #endif

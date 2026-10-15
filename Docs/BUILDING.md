@@ -130,9 +130,14 @@ powershell -ExecutionPolicy Bypass -File meta\art\make_art.ps1
 The boot sound needs 48 kHz 16-bit stereo WAV, at most 20 s. A `.btsnd` is an 8-byte big-endian header
 (0 = play once, loop start 0) followed by big-endian PCM. wuhbtool can't add it, so `build.ps1` puts it into
 each bundle's `meta/` folder after the build with `scripts/wuhb-add-file.ps1`, which rewrites the bundle
-(a RomFS) exactly as wuhbtool lays it out (checked: a round trip gives a byte-identical file). Aroma's
-Wii U Menu plugin serves `meta/*.btsnd` from the bundle, and the bundle reader opens `x.gz` for `x`. A
-plain `cmake --build` without `build.ps1` gives bundles without the boot sound. `-List` shows a bundle's
+(a RomFS) exactly as wuhbtool lays it out (checked: a round trip gives a byte-identical file). **The boot
+sound doesn't play on hardware (owner, 2026-10-14)**, though the icon and boot screens from the same
+bundle do. Aroma's `homebrew_on_menu` plugin has passed `.btsnd` opens to the bundle since 2019, and the
+bundle reader opens `x.gz` for `x`, yet boot sounds for homebrew are still an open feature request there
+(wiiu-env/homebrew_on_menu_plugin issue 56, 2025). So the Wii U Menu probably reads the sound in a way
+the plugin doesn't hook: it only replaces `FSOpenFile`, `FSReadFile` and `FSCloseFile`, not the async,
+stat or seek calls. Nothing on our side can fix that; the file is kept in the bundles in case Aroma adds
+support. A plain `cmake --build` without `build.ps1` gives bundles without the boot sound. `-List` shows a bundle's
 files: `.\scripts\wuhb-add-file.ps1 -Wuhb build\halflife.wuhb -List`.
 
 ## Releasing

@@ -40,6 +40,8 @@
 | 2026-10-14 | (row below) | **Real Wii U** (owner) | Save pictures from the menu showed the menu; the last used menu button stayed highlighted; Blue Shift and Opposing Force menus had no title |
 | 2026-10-14 | world rendered for the save picture, stale menu focus cleared, animated title for every game | Cemu 2.6, recompiler | Save from the in-game menu: picture shows the game. Blue Shift menu shows the HALF-LIFE title |
 | 2026-10-14 | Blue Shift + Opposing Force (`bshift.wuhb`, `opfor.wuhb`), menus trimmed (no Multiplayer / Change game, Console always shown, Controls list GamePad-only), HUD text x2, config version 1 | Cemu 2.6, recompiler | Blue Shift: ba_tram1 with its blue HUD and credits (now readable). Opposing Force: of1a1 with its own entities. Main menu: Console, New game, Hazard course, Configuration, Load game, Quit. Cemu itself crashed on `changelevel` and on the Opposing Force menu; both fine with `--force-interpreter` (Opposing Force Controls: no Communication / Capture the Flag sections, only GamePad buttons) |
+| 2026-10-14 | gx2gl: 32-byte vertices written once + indexed draws, fast path for ref_gl's model arrays; `r_speeds 6` frame phase breakdown | Cemu 2.6, recompiler | c1a0 lobby (same view): CPU 5.9 → 4.1 ms, studio model vertices 3.5 → 1.6 ms. c2a5: correct. (Cemu timings, not hardware) |
+| 2026-10-14 | polygon offset factor no longer ×16 (GX2 does it) | Cemu 2.6, recompiler | Owner saw faces through other faces; c1a0's door wheels poked through the wall above them (also with the old gx2gl). Fixed; the wheels match `-ref soft` apart from GL's brighter lighting |
 
 ## Test checklist for new builds
 
@@ -95,10 +97,11 @@
 - **Performance:** the software renderer is very slow on the real 1.24 GHz CPU (owner's first hardware
   test). Cemu runs much faster than the hardware, so don't judge speed there. The hardware renderer
   (`ref_gl` on gx2gl, ARCHITECTURE.md) is the fix: 30–60 FPS in the Hazard Course on hardware, and the
-  default since 2026-10-14 (`-ref soft` for the old one). gx2gl sends only changed state since
-  2026-10-14 (hardware FPS not compared yet). Still on the CPU: every vertex goes through immediate mode and
-  is converted to gx2gl's format. Next candidate: VBO support, so `ref_gl` can keep the world in GPU
-  memory.
+  default since 2026-10-14 (`-ref soft` for the old one). gx2gl sends only changed state, writes each
+  vertex once (32 bytes, indexed draws) and copies model arrays directly since 2026-10-14 (hardware FPS
+  not compared yet). `r_speeds 6` shows where the CPU time goes (ARCHITECTURE.md); the next step depends on
+  hardware numbers from scenes that drop below 60 FPS. Candidates: ref_gl's studio model CPU work, VBO
+  support for the world.
 - **Save dates show Jan 1 1980** in Cemu (file time 0); not checked on hardware.
 - **gx2gl gaps:** no stencil (`ref_gl`'s stencil shadows off, and
   decals on transparent `{` surfaces such as grates are skipped), water
@@ -132,6 +135,7 @@
    hardware.
 5. Blue Shift and Opposing Force: built 2026-10-14 as `bshift.wuhb` / `opfor.wuhb` (owner's choice: one icon
    per game). Both start and play their first map in Cemu; to check on hardware and play through.
-6. Polish: icons, boot screens and boot sound (done 2026-10-14, owner's art), a first-run message with clear instructions when `sd:/wiiu/apps/halflife/valve` is
+6. Polish: icons and boot screens (done 2026-10-14, owner's art, work on hardware; the boot sound is in
+   the bundles but Aroma doesn't play homebrew boot sounds, BUILDING.md), a first-run message with clear instructions when `sd:/wiiu/apps/halflife/valve` is
    missing (done 2026-10-14; other fatal errors still just close the app, as SDL has no message box on Wii
    U), GamePad screen use (HUD, console or map).

@@ -217,10 +217,15 @@ engine's `GL_GetProcAddress`, which on Wii U is `GX2GL_GetProcAddress`.
   `ref_gl` uses its classic immediate-mode path. Every OpenGL 1.1 function `ref_gl` looks up exists, some as
   stubs (see below).
 - **Drawing:** immediate mode and client arrays are converted on the CPU into one vertex format (position,
-  colour, two texcoords, 48 bytes) and triangle/line/point lists in a vertex ring buffer (2 × 6 MB, one half
-  per frame in flight, guarded by GPU timestamps). Consecutive primitives with the same state are one draw
-  call; a GL call that really changes state flushes (setting the same value again doesn't). The texture
-  matrix is applied on the CPU. Before each draw, `GX2GL_ApplyState` only sends the state groups and
+  RGBA8 colour, two texcoords: 32 bytes, one CPU cache line, zeroed with `dcbz` instead of read before it's
+  written) in a vertex ring buffer (2 × 6 MB, one half per frame in flight, guarded by GPU timestamps).
+  Every vertex is written once: `glVertex` writes straight into the ring, and only 16-bit indices turn
+  polygons, fans, strips and quads into triangles (an index ring next to it, 3 indices per vertex).
+  `glDrawElements` / `glDrawRangeElements` with ref_gl's array layout (float xyz, float st, RGBA8; studio
+  models use this, `r_studio_drawelements 1`) copy each used vertex once and keep the indices
+  (`GX2GL_FastArrays`); other layouts go through the slow generic reader. Consecutive primitives with the
+  same state are one draw call; a GL call that really changes state flushes (setting the same value again
+  doesn't). The texture matrix is applied on the CPU. Before each draw, `GX2GL_ApplyState` only sends the state groups and
   uniform blocks that differ from what it sent last (`sent`); the cache is cleared whenever the GX2 context
   is set again (after clears, copies, uploads and swaps) or a texture's registers change.
 - **Shaders:** one fixed-function pair (`src/gx2gl/shaders/fixed.vsh/.psh`, GPU assembly, see BUILDING.md).
@@ -237,10 +242,17 @@ engine's `GL_GetProcAddress`, which on Wii U is `GX2GL_GetProcAddress`.
   `WIIU_SWKBD_Draw` (a public symbol in `libSDL2.a`) with no context state bound, before copying to the
   screens. SDL also switches the colour buffer to sRGB around the draw; that crashed Cemu, so it's left out
   (the keyboard's gamma may be slightly off on hardware).
-- **Performance counters:** `r_speeds 6` (a Wii U case in `ref_gl`'s `gl_backend.c`) shows gx2gl's frame
-  time, CPU time (frame time minus the waits), the time spent waiting for the GPU and for vsync, draw calls
-  and vertices per frame (averaged over half a second, `glGetString( GX2GL_STATS )`), plus the world's CPU
-  time and polygon counts.
+- **Performance counters:** `r_speeds 6` (a Wii U case in `ref_gl`'s `gl_backend.c`) shows, averaged over
+  half a second (`glGetString( GX2GL_STATS )`): frame time, CPU time (frame time minus the waits), the time
+  spent waiting for the GPU and for vsync; then where the CPU time goes: game (server frame), client,
+  sound mixing, the 3D view with the world and the entities, studio models (all of it, including the game's
+  bone setup) and their vertex part (`R_StudioDrawPoints`), HUD/menus, and gx2gl's own share (sending
+  draws, uploads); then draw calls, vertices and polygon counts. The phases are timed with
+  `GX2GL_PROF( phase, call )` (`gx2gl.h`) in `host.c`, `cl_main.c`, `gl_rmain.c` and `gl_studio.c`.
+- **Polygon offset:** GL's factor goes to `GX2SetPolygonOffset` unchanged, because GX2 itself multiplies
+  it by 16 for the register (Cemu's GX2 does the same). Until 2026-10-14 gx2gl multiplied by 16 as well,
+  so brush entities (ref_gl draws them with `gl_polyoffset_bmodels`, factor -0.5) were pulled 16 times too
+  far toward the camera at steep angles and showed through walls (c1a0's door wheels).
 - **Output:** our own colour (RGBA8) and depth (float 32) buffers in MEM2, copied (scaled) to the TV and
   GamePad scan buffers that SDL's video driver owns. Nothing is sent to the GPU in the background, checked
   live with `ProcUIInForeground` before every GPU call or wait. A per-frame flag wasn't enough: after
