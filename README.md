@@ -6,7 +6,7 @@ A native port of Half-Life to the Wii U, for the Aroma homebrew environment.
 
 It runs the game on [Xash3D FWGS](https://github.com/FWGS/xash3d-fwgs), an open-source engine compatible with
 Valve's GoldSrc, with the game code from [hlsdk-portable](https://github.com/FWGS/hlsdk-portable). Rendering
-uses the Wii U's GPU directly. Blue Shift and Opposing Force are included as separate apps.
+uses the Wii U's GPU directly. Compatibility is included for playing Blue Shift and Opposing Force.
 
 **You need your own copy of Half-Life from Steam.** No game files are included.
 
@@ -50,7 +50,6 @@ enemies can drop into the 50s. If you find a bug, please open an issue (see [Rep
    To move the GamePad back to a comfortable position, turn gyro aiming off with −, move it, and turn it back
    on. Gyro settings are in Configuration → Gamepad → Gyroscope.
  - Buttons can be rebound in Configuration → Controls; stick speed is in Configuration → Gamepad.
- - R / L switch weapons directly. With `hud_fastswitch 0` they only move the selection and ZR confirms.
  - The console (Main menu → Console) opens the GamePad keyboard; press Y to bring it back after closing it.
 
 ## Installing
@@ -58,14 +57,14 @@ enemies can drop into the 50s. If you find a bug, please open an issue (see [Rep
 Requires a Wii U with [Aroma](https://aroma.foryour.cafe/) installed.
 
 1. Download the latest release from the [Releases page](https://github.com/NanoBunTV/Wii-U-Half-Life/releases/latest).
-2. Copy `halflife.wuhb` to `sd:/wiiu/apps/`.
+2. Copy the `halflife` folder to `sd:/wiiu/apps`.
 3. Copy the `valve` folder from your Steam install (`Steam\steamapps\common\Half-Life\valve`, about 600 MB) to
-   `sd:/wiiu/apps/halflife/valve`.
+   `sd:/wiiu/apps/halflife`.
 4. Start Half-Life from the Wii U Menu. If the game files aren't found, it says so on screen.
 
-**Blue Shift and Opposing Force** (if you own them on Steam): also copy `bshift.wuhb` and/or `opfor.wuhb` to
-`sd:/wiiu/apps/`, and the `bshift` (about 300 MB) and/or `gearbox` (about 290 MB) folder from the same Steam
-folder to `sd:/wiiu/apps/halflife/`, next to `valve`. Both need the `valve` folder too.
+**Blue Shift and Opposing Force** (if you own them on Steam): also copy the `bshift` (about 300 MB) and/or `gearbox`
+(about 290 MB) folder from the same Steam folder to `sd:/wiiu/apps/halflife/`, next to `valve`.
+Both need the `valve` folder too.
 
 Saves and settings are stored in the game folders under `sd:/wiiu/apps/halflife/`.
 
@@ -83,7 +82,6 @@ Saves and settings are stored in the game folders under `sd:/wiiu/apps/halflife/
  - Saves copied from a PC can't be loaded; they're marked as such in Load Game.
  - No intro videos.
  - Counter-Strike and other mods aren't supported.
- - The Wii U Menu doesn't play the boot sound (Aroma doesn't support boot sounds for homebrew).
  - If the game hits a fatal error, it closes without a message. Turn on logging (below) to find out why.
 
 ## Reporting a problem
