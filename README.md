@@ -21,15 +21,17 @@ enemies can drop into the 50s. If you find a bug, please open an issue (see [Rep
  - Hardware rendering on the Wii U's GPU, 1280x720, on the TV and the GamePad at the same time (Off-TV play works)
  - Uses the current Steam version of the game files (25th Anniversary update), including Hazard Course and Uplink
  - Full GamePad controls, with gyro aiming (can be turned off, inverted or made faster/slower)
+ - Wii U Pro Controller support, with the same button layout
  - Rebindable buttons and adjustable stick speed in the game's own Configuration menu
  - Quick save / quick load on the D-pad, plus the normal save and load menus with save pictures
  - Music, sound effects and voices, with a sound boost for the GamePad's speakers
  - On-screen keyboard (GamePad keyboard) for the console and for naming saves
  - HOME button support: the game pauses and resumes, and Close quits cleanly
- - On-screen text such as titles and credits drawn larger, to be readable on a TV
+ - On-screen text such as titles, credits, messages, the FPS counter and the console drawn larger, to be
+   readable on a TV and on the GamePad
  - Custom icons and boot screens
 
-## Controls (Wii U GamePad)
+## Controls (Wii U GamePad and Pro Controller)
 
 | Button | Action |
 |---|---|
@@ -45,10 +47,13 @@ enemies can drop into the 50s. If you find a bug, please open an issue (see [Rep
 | + | Pause menu |
 | − | Gyro aiming on / off |
 
- - **Gyro aiming** is on by default and adds to the right stick. Keep the GamePad still while the game starts,
-   until a few seconds after the main menu appears, so the gyro can calibrate; otherwise the view slowly drifts.
-   To move the GamePad back to a comfortable position, turn gyro aiming off with −, move it, and turn it back
-   on. Gyro settings are in Configuration → Gamepad → Gyroscope.
+ - **Gyro aiming** (GamePad only) is on by default and adds to the right stick. It calibrates when the game
+   starts and starts working once the GamePad has been held still for a second. To move the GamePad back to
+   a comfortable position, turn gyro aiming off with −, move it, and turn it back on. Turning it on also
+   recalibrates: hold the GamePad still for a moment, which also fixes a slow drift of the view. Gyro
+   settings are in Configuration → Gamepad → Gyroscope.
+ - **Pro Controller:** same buttons, without gyro aiming. The controller you last used is the one in
+   control; you can switch between it and the GamePad at any time.
  - Buttons can be rebound in Configuration → Controls; stick speed is in Configuration → Gamepad.
  - The console (Main menu → Console) opens the GamePad keyboard; press Y to bring it back after closing it.
 

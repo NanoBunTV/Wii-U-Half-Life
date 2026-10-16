@@ -52,6 +52,9 @@
 | 2026-10-14 | Send parts | **Real Wii U** (owner), `r_speeds 6` | Same fight, CPU 15.2 ms: top begin 13 (`Netchan_TransmitBits`) 0.9, send: cmd 0.4, packet 1.0. Cause: `Netchan_TransmitBits` cleared its whole 192 KB `send_buf` (`NET_MAX_MESSAGE`) on every send, on the client and again on the server. Now clears only the bytes the packet can use; Cemu c1a0 tram ride runs normally, begin 13 gone from "top" |
 | 2026-10-14 | Send buffer fix | **Real Wii U** (owner), `r_speeds 6` | Same fight, 58 FPS, **CPU 12.2 ms** (was 13.5–15.2): input 0.4 (was 1.2–1.4), packet 0.1 (was 1.0), game 1.7 (was 2.2), client 0.9. Remaining CPU is mostly rendering: 3D view 7.9 of which studio models 4.6 (vertices 3.0) |
 | 2026-10-14 | − = gyro aiming on/off (`joy_gyro_toggle`), "top" timing line | Cemu 2.6 (test copy) | − bound to the toggle; a saved `bind BACK "+gyro_recenter"` loads as the toggle; "top" line shows (c1a0: begin part 5, 0.2 ms) |
+| 2026-10-15 | Gyro calibration waits for a still second, − recalibrates; Pro Controller mapping | Cemu 2.6 (test copy, emulated Pro Controller as controller 2) | Log: `waiting for the GamePad to be held still`, `Calibration done` during the map load; `Detected "Wii U Pro Controller" game controller` with the new mapping (connected at startup), GamePad stays active. Pro Controller buttons and the recalibration itself not testable in Cemu (no gyro motion, no input for controller 2) |
+| 2026-10-15 | `con_fontscale 2` (config step 2) | Cemu 2.6 (test copy) | `Applied Wii U default settings (config version 2)`; notify lines, FPS counter, "Gyro aiming off" and the console at twice the size, GamePad keyboard still opens over the console |
+| 2026-10-15 | Notify lines only with `-dev` | Cemu 2.6 (test copy) | Without `-dev`: no console lines top left during play (`con_notifytime 60`), FPS counter shown, console still opens (`toggleconsole`) |
 
 ## Test checklist for new builds
 
@@ -92,6 +95,9 @@
   4. The axes: pitch = −x; yaw = −(rotation around the smoothed accelerometer's up axis), so turning
      works at any holding angle (`SDLash_WiiUGyroToView`). Cemu's SDL→VPAD conversion got pitch right
      but suggested the wrong yaw sign.
+  5. Moving the GamePad during the startup calibration left a slight constant drift until the next
+     start (owner, 2026-10-15). Calibration now waits for 1 s of holding still, and turning gyro aiming
+     on with − recalibrates (ARCHITECTURE.md). To check on hardware.
 
   Diagnosis: run with `-log` (cmdline.txt); `sd:/wiiu/apps/halflife/engine.log` shows
   `GamePad gyro: receiving samples (gyro …, acc …)` and `Calibration done. Result: …`. Players can invert

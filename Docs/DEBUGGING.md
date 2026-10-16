@@ -31,7 +31,11 @@ Or start it by hand: `Cemu.exe -g "F:\Wii U Homebrew\Half-Life\build\halflife.wu
   and a second normal instance hangs without loading the game. `E:\ROMs and Emulators\_Emulators\Cemu-HL-test`
   is a portable copy (Cemu.exe, resources, `portable\settings.xml` windowed, `portable\sdcard` a junction
   to the same SD card) with its own log in `portable\log.txt`. Use
-  `run-cemu.ps1 -Cemu '...\Cemu-HL-test\Cemu.exe'` and `capture-cemu.ps1 -Cemu <same>`.
+  `run-cemu.ps1 -Cemu '...\Cemu-HL-test\Cemu.exe'` and `capture-cemu.ps1 -Cemu <same>`. Its
+  `controllerProfiles\controller1.xml` adds an emulated Pro Controller (keyboard, no buttons mapped), so
+  the log shows whether the game detects one. If Cemu exits with 0xC0000409 right after
+  "can't initialize tv audio" in its log, the saved TV audio device is gone: empty `<TVDevice>` in
+  `portable\settings.xml` (done 2026-10-15).
 - **Scripts that wait for a log line:** Cemu recreates `log.txt` about 1–2 s after starting, so the previous
   run's lines are still there at first. Wait a few seconds before searching it (`run-cemu.ps1` does).
 

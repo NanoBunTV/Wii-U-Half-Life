@@ -342,10 +342,23 @@ index c1b3ef1..428cf16 100644
  	V_CalcViewRect ();	// compute viewport rectangle
  	V_SetRefParams( &rp );
 diff --git a/engine/client/console.c b/engine/client/console.c
-index f4cb680..bdfafee 100644
+index f4cb680..0b24f92 100644
 --- a/engine/client/console.c
 +++ b/engine/client/console.c
-@@ -296,6 +296,11 @@ void Con_ToggleConsole_f( void )
+@@ -28,7 +28,12 @@ static CVAR_DEFINE_AUTO( con_notifytime, "3", FCVAR_ARCHIVE, "notify time to liv
+ CVAR_DEFINE_AUTO( con_fontsize, "1", FCVAR_ARCHIVE, "console font number (0, 1 or 2)" );
+ static CVAR_DEFINE_AUTO( con_fontrender, "2", FCVAR_ARCHIVE, "console font render mode (0: additive, 1: holes, 2: trans)" );
+ static CVAR_DEFINE_AUTO( con_charset, "cp1251", FCVAR_ARCHIVE, "console font charset (only cp1251 supported now)" );
++#if XASH_WIIU
++// console, notify lines, FPS counter and centre prints at twice the size, readable on the GamePad
++static CVAR_DEFINE_AUTO( con_fontscale, "2", FCVAR_ARCHIVE, "scale font texture" );
++#else
+ static CVAR_DEFINE_AUTO( con_fontscale, "1.0", FCVAR_ARCHIVE, "scale font texture" );
++#endif
+ static CVAR_DEFINE_AUTO( con_fontnum, "-1", FCVAR_ARCHIVE, "console font number (0, 1 or 2), -1 for autoselect" );
+ static CVAR_DEFINE_AUTO( con_color, "240 180 24", FCVAR_ARCHIVE, "set a custom console color" );
+ static CVAR_DEFINE_AUTO( scr_drawversion, "1", FCVAR_ARCHIVE, "draw version in menu or screenshots, doesn't affect console" );
+@@ -296,6 +301,11 @@ void Con_ToggleConsole_f( void )
  		// opening console - just switch key_dest, don't call UI_SetActiveMenu
  		// which would reset menu state via on_menu_hide()
  		Key_SetKeyDest( key_console );
@@ -357,6 +370,23 @@ index f4cb680..bdfafee 100644
  	}
  }
  
+@@ -1816,8 +1826,15 @@ static void Con_DrawNotify( void )
+ 	if( !con.curFont ) return;
+ 
+ 	int x = con.curFont->charWidths[' ']; // offset one space at left screen side
++	qboolean lines = host.allow_console;
++
++#if XASH_WIIU
++	// the console is always allowed on Wii U (DEFAULT_ALLOWCONSOLE, for the menu's Console entry), which
++	// would show every console message top left during play: only with -dev, as on PC
++	lines = lines && host_developer.value > 0;
++#endif
+ 
+-	if( host.allow_console && !Con_BackgroundMapActive( ))
++	if( lines && !Con_BackgroundMapActive( ))
+ 	{
+ 		for( int i = Q_max( 0, CON_LINES_COUNT - con.num_times ); i < CON_LINES_COUNT; i++ )
+ 		{
 diff --git a/engine/client/dll_int/ref_common.c b/engine/client/dll_int/ref_common.c
 index 8ea38dc..3181a63 100644
 --- a/engine/client/dll_int/ref_common.c
@@ -376,7 +406,7 @@ index 8ea38dc..3181a63 100644
  		Q_strncpy( requested_cvar, r_refdll.string, sizeof( requested_cvar ));
  
 diff --git a/engine/client/input/in_joy.c b/engine/client/input/in_joy.c
-index 1da3114..c3769de 100644
+index 1da3114..06d4aa8 100644
 --- a/engine/client/input/in_joy.c
 +++ b/engine/client/input/in_joy.c
 @@ -66,8 +66,13 @@ static struct joy_touchpad_s
@@ -415,7 +445,7 @@ index 1da3114..c3769de 100644
  	{
  		float pitch_speed = joy_gyro_speed[0] * ( 180.0f / M_PI );
  		float yaw_speed   = joy_gyro_speed[1] * ( 180.0f / M_PI );
-@@ -777,6 +788,36 @@ static void Joy_UnbindAll_f( void )
+@@ -777,6 +788,46 @@ static void Joy_UnbindAll_f( void )
  		Key_SetBinding( key, "" );
  }
  
@@ -439,20 +469,30 @@ index 1da3114..c3769de 100644
 +	joy_gyro_held = false;
 +}
 +
-+// − on the GamePad: gyro aiming on/off (joy_gyro_enable is saved, on by default)
++// − on the GamePad: gyro aiming on/off (joy_gyro_enable is saved, on by default). Turning it on
++// recalibrates, which fixes a drift left by a startup calibration done while the GamePad moved: the
++// gyro starts once the GamePad has been held still for a moment (joy_sdl2.c)
 +static void Joy_GyroToggle_f( void )
 +{
 +	qboolean enable = joy_gyro_enable.value ? false : true;
 +
++	if( !joy_have_gyro.value )
++	{
++		CL_CenterPrint( "This controller has no gyro", 0.25f );
++		return;
++	}
++
 +	Cvar_DirectSet( &joy_gyro_enable, enable ? "1" : "0" );
-+	CL_CenterPrint( enable ? "Gyro aiming on" : "Gyro aiming off", 0.25f );
++	if( enable )
++		Platform_CalibrateGamepadGyro();
++	CL_CenterPrint( enable ? "Gyro aiming on - hold the GamePad still" : "Gyro aiming off", 0.25f );
 +}
 +#endif
 +
  static void Joy_CalibrateGyro_f( void )
  {
  	if( !joy_have_gyro.value )
-@@ -799,6 +840,12 @@ void Joy_Init( void )
+@@ -799,6 +850,12 @@ void Joy_Init( void )
  {
  	Cmd_AddRestrictedCommand( "joy_calibrate_gyro", Joy_CalibrateGyro_f, "calibrate gamepad gyroscope. You must to put gamepad on stationary surface" );
  	Cmd_AddRestrictedCommand( "joy_unbindall", Joy_UnbindAll_f, "removes all commands from all gamepad keys" );
@@ -751,7 +791,7 @@ index 9ed62eb..a7e4e3a 100644
  	// SDL2 hands the base path over to us, SDL3 keeps ownership and frees it on quit
  	qboolean owned = XASH_SDL == 2;
 diff --git a/engine/common/host.c b/engine/common/host.c
-index f04c5f9..7faecef 100644
+index f04c5f9..92cb280 100644
 --- a/engine/common/host.c
 +++ b/engine/common/host.c
 @@ -38,6 +38,11 @@ GNU General Public License for more details.
@@ -782,7 +822,7 @@ index f04c5f9..7faecef 100644
  	HTTP_Run();			 // both server and client
  	XRcon_Frame();
  
-@@ -995,6 +1000,39 @@ static void Host_CheckGameLibraries( void )
+@@ -995,6 +1000,41 @@ static void Host_CheckGameLibraries( void )
  #endif // XASH_INTERNAL_GAMELIBS
  }
  
@@ -804,6 +844,8 @@ index f04c5f9..7faecef 100644
 +	{
 +		// 1: weapons switch directly with L/R, HUD text sized for 720p
 +		"hud_fastswitch 1\nhud_fontscale 2\n",
++		// 2: console font (also notify lines, FPS counter, centre prints) readable on the GamePad
++		"con_fontscale 2\n",
 +	};
 +	int version = (int)wiiu_config_version.value;
 +
@@ -822,7 +864,7 @@ index f04c5f9..7faecef 100644
  /*
  =================
  Host_InitCommon
-@@ -1274,6 +1312,9 @@ int EXPORT Host_Main( int argc, char **argv, const char *progname, int bChangeGa
+@@ -1274,6 +1314,9 @@ int EXPORT Host_Main( int argc, char **argv, const char *progname, int bChangeGa
  	case HOST_NORMAL:
  #ifdef _WIN32
  		Wcon_ShowConsole( false ); // hide console
@@ -832,7 +874,7 @@ index f04c5f9..7faecef 100644
  #endif
  		// execute startup config and cmdline
  		if( FS_FileExists( va( "%s.rc", progname ), false )) // e.g. valve.rc
-@@ -1293,6 +1334,10 @@ int EXPORT Host_Main( int argc, char **argv, const char *progname, int bChangeGa
+@@ -1293,6 +1336,10 @@ int EXPORT Host_Main( int argc, char **argv, const char *progname, int bChangeGa
  		// exec all files from userconfig.d
  		Cbuf_AddText( "userconfigd\n" );
  		Cbuf_Execute();
@@ -1169,7 +1211,7 @@ index fbcc883..15f9354 100644
  }
  
 diff --git a/engine/platform/sdl2/joy_sdl2.c b/engine/platform/sdl2/joy_sdl2.c
-index 99d45b0..bfa6541 100644
+index 99d45b0..4f3cc24 100644
 --- a/engine/platform/sdl2/joy_sdl2.c
 +++ b/engine/platform/sdl2/joy_sdl2.c
 @@ -19,6 +19,12 @@ GNU General Public License for more details.
@@ -1185,7 +1227,45 @@ index 99d45b0..bfa6541 100644
  
  static const int g_button_mapping[] =
  {
-@@ -78,6 +84,13 @@ static void SDLash_RestartCalibration( void )
+@@ -54,6 +60,16 @@ static size_t g_num_gamepads;
+ 
+ #define CALIBRATION_TIME 5.0f
+ 
++#if XASH_WIIU
++// a (re)calibration only counts once the GamePad has been held still this long: averaging whatever
++// arrives turned movement during the first seconds into a constant drift. "Still" = every sample
++// within WIIU_STILL_LIMIT (rad/s) of the window's average; holding it in the hands passes, turning doesn't
++#define WIIU_STILL_TIME  1.0f
++#define WIIU_STILL_LIMIT 0.1f
++// a recalibration (gyro turned back on with −) gives up after this long and keeps the old offsets
++#define WIIU_STILL_GIVEUP 4.0f
++#endif
++
+ static struct
+ {
+ 	float    time;
+@@ -62,10 +78,20 @@ static struct
+ 	float    data_rate;
+ 	int      samples;
+ 	qboolean continuous; // true after first successful calibration
++	qboolean still;      // Wii U: looking for a still window, gyro events blocked meanwhile
++	float    giveup;     // Wii U: recalibration deadline (0 = none)
+ } gyrocal;
+ 
+ static void SDLash_RestartCalibration( void )
+ {
++#if XASH_WIIU
++	// keep the last good offsets while a new still window is looked for
++	qboolean had = gyrocal.continuous;
++	vec3_t old;
++
++	VectorCopy( gyrocal.calibrated_values, old );
++	if( !had )
++#endif
+ 	Joy_SetCalibrationState( JOY_NOT_CALIBRATED );
+ 
+ 	memset( &gyrocal, 0, sizeof( gyrocal ));
+@@ -78,6 +104,23 @@ static void SDLash_RestartCalibration( void )
  	if( !gyrocal.data_rate )
  		gyrocal.data_rate = 10.0f;
  
@@ -1194,12 +1274,40 @@ index 99d45b0..bfa6541 100644
 +	// loading the menu at a frame or two per second: want 20 samples, however long that takes (see
 +	// SDLash_FinalizeCalibration)
 +	gyrocal.data_rate = 8.0f;
++	gyrocal.still = true;
++	gyrocal.time = host.realtime + WIIU_STILL_TIME;
++	if( had )
++	{
++		gyrocal.continuous = true;
++		VectorCopy( old, gyrocal.calibrated_values );
++		gyrocal.giveup = host.realtime + WIIU_STILL_GIVEUP;
++	}
++	Con_Printf( S_NOTE "Gyroscope calibration: waiting for the GamePad to be held still for %g seconds...\n", WIIU_STILL_TIME );
++	return;
 +#endif
 +
  	Con_Printf( S_NOTE "Starting gyroscope calibration at %g data rate for %g seconds...\n", gyrocal.data_rate, CALIBRATION_TIME );
  }
  
-@@ -90,6 +103,12 @@ static void SDLash_FinalizeCalibration( void )
+@@ -85,11 +128,30 @@ static void SDLash_FinalizeCalibration( void )
+ {
+ 	int min_samples = Q_rint( CALIBRATION_TIME * gyrocal.data_rate * 0.5f );
+ 
++#if XASH_WIIU
++	if( gyrocal.still )
++	{
++		// a still window: at the menu's load-time frame rate it can be short of samples, keep collecting
++		min_samples = Q_rint( WIIU_STILL_TIME * gyrocal.data_rate * 0.5f );
++		if( gyrocal.samples <= min_samples )
++		{
++			gyrocal.time = host.realtime + 0.5f;
++			return;
++		}
++	}
++#endif
++
+ 	// we waited for few seconds and got too few samples
+ 	if( gyrocal.samples <= min_samples )
  	{
  		if( !gyrocal.continuous )
  		{
@@ -1212,7 +1320,57 @@ index 99d45b0..bfa6541 100644
  			Joy_SetCalibrationState( JOY_FAILED_TO_CALIBRATE );
  			Con_Printf( S_ERROR "Calibration failed, got samples %d < %d\n", gyrocal.samples, min_samples );
  			gyrocal.time = 0.0f;
-@@ -154,6 +173,15 @@ static void SDLash_GameControllerAddMappings( const char *name )
+@@ -101,11 +163,13 @@ static void SDLash_FinalizeCalibration( void )
+ 	{
+ 		VectorScale( gyrocal.data, 1.0f / gyrocal.samples, gyrocal.calibrated_values );
+ 		Joy_SetCalibrationState( JOY_CALIBRATED );
+-		if( !gyrocal.continuous )
++		if( !gyrocal.continuous || gyrocal.still )
+ 			Con_Printf( "Calibration done. Result: %f %f %f at %d samples\n", gyrocal.calibrated_values[0], gyrocal.calibrated_values[1], gyrocal.calibrated_values[2], gyrocal.samples );
+ 		// else
+ 		//	Con_Reportf( "Continuous calibration done. Result: %f %f %f at %d samples\n", gyrocal.calibrated_values[0], gyrocal.calibrated_values[1], gyrocal.calibrated_values[2], gyrocal.samples );
+ 		gyrocal.continuous = true;
++		gyrocal.still = false;
++		gyrocal.giveup = 0.0f;
+ 	}
+ 
+ 	// schedule next calibration window
+@@ -116,6 +180,34 @@ static void SDLash_FinalizeCalibration( void )
+ 
+ static void SDLash_AccumulateCalibrationData( vec3_t data )
+ {
++#if XASH_WIIU
++	if( gyrocal.still )
++	{
++		if( gyrocal.samples > 0 )
++		{
++			vec3_t avg, diff;
++
++			VectorScale( gyrocal.data, 1.0f / gyrocal.samples, avg );
++			VectorSubtract( data, avg, diff );
++
++			// moved: start the still window over from this sample
++			if( VectorLength( diff ) > WIIU_STILL_LIMIT )
++			{
++				VectorClear( gyrocal.data );
++				gyrocal.samples = 0;
++				gyrocal.time = host.realtime + WIIU_STILL_TIME;
++			}
++		}
++
++		VectorAdd( gyrocal.data, data, gyrocal.data );
++		gyrocal.samples++;
++
++		if( !gyrocal.continuous )
++			Joy_SetCalibrationState( JOY_CALIBRATING );
++		return;
++	}
++#endif
++
+ 	// for continuous background calibration only listen for noise
+ 	// by comparing it with calibrated values
+ 	//
+@@ -154,6 +246,15 @@ static void SDLash_GameControllerAddMappings( const char *name )
  	Mem_Free( p );
  }
  
@@ -1228,7 +1386,7 @@ index 99d45b0..bfa6541 100644
  static void SDLash_SetActiveGameController( SDL_JoystickID id )
  {
  	if( g_current_gamepad_id == id )
-@@ -191,6 +219,17 @@ static void SDLash_SetActiveGameController( SDL_JoystickID id )
+@@ -191,6 +292,19 @@ static void SDLash_SetActiveGameController( SDL_JoystickID id )
  		}
  #endif // SDL_VERSION_ATLEAST( 2, 0, 14 )
  
@@ -1237,8 +1395,10 @@ index 99d45b0..bfa6541 100644
 +		if( SDLash_IsWiiUGamePad( g_current_gamepad ))
 +		{
 +			// the GamePad gyro has a zero offset of several degrees per second, so it needs the
-+			// calibration (on the raw gyro axes, see SDLash_WiiUGyroToView)
-+			SDLash_RestartCalibration();
++			// calibration (on the raw gyro axes, see SDLash_WiiUGyroToView). Switching back from a Pro
++			// Controller keeps the calibration it already has
++			if( !gyrocal.continuous )
++				SDLash_RestartCalibration();
 +			have_gyro = true;
 +		}
 +#endif
@@ -1246,7 +1406,7 @@ index 99d45b0..bfa6541 100644
  		Joy_SetCapabilities( have_gyro, num_touchpads );
  	}
  }
-@@ -261,34 +300,185 @@ static void SDLash_GameControllerRemoved( SDL_JoystickID id )
+@@ -261,34 +375,198 @@ static void SDLash_GameControllerRemoved( SDL_JoystickID id )
  	}
  }
  
@@ -1294,6 +1454,19 @@ index 99d45b0..bfa6541 100644
 +static void SDLash_GyroSample( float *sample )
 +{
 +	vec3_t data;
++
++#if XASH_WIIU
++	// a recalibration that never found a still moment: keep the old offsets
++	if( gyrocal.still && gyrocal.giveup != 0.0f && host.realtime > gyrocal.giveup )
++	{
++		Con_Printf( "Gyroscope recalibration: GamePad not held still, keeping the previous calibration\n" );
++		gyrocal.still = false;
++		gyrocal.giveup = 0.0f;
++		VectorClear( gyrocal.data );
++		gyrocal.samples = 0;
++		gyrocal.time = host.realtime + CALIBRATION_TIME;
++	}
++#endif
  
  	if( gyrocal.time != 0.0f )
  	{
@@ -1303,8 +1476,10 @@ index 99d45b0..bfa6541 100644
 -			SDLash_AccumulateCalibrationData( sensor.data );
 +			SDLash_AccumulateCalibrationData( sample );
  
- 		// block gyro events only during initial calibration
- 		if( !gyrocal.continuous )
+-		// block gyro events only during initial calibration
+-		if( !gyrocal.continuous )
++		// block gyro events only during initial calibration (Wii U: and while looking for a still window)
++		if( !gyrocal.continuous || gyrocal.still )
  			return;
  	}
  
@@ -1441,7 +1616,20 @@ index 99d45b0..bfa6541 100644
  #if SDL_VERSION_ATLEAST( 2, 0, 14 )
  static void SDLash_GameControllerTouchpadEvent( const SDL_ControllerTouchpadEvent *tpad, qboolean down )
  {
-@@ -363,7 +553,55 @@ void Platform_Vibrate2( float time, int val1, int val2, uint flags )
+@@ -310,6 +588,12 @@ void SDLash_HandleGameControllerEvent( SDL_Event *ev )
+ 	switch( ev->type )
+ 	{
+ 	case SDL_CONTROLLERAXISMOTION:
++#if XASH_WIIU
++		// GamePad and Pro Controller share the engine's axes: a resting stick's small changes on the
++		// controller not in use would overwrite the other one's, so only a real push switches over
++		if( ev->caxis.which != g_current_gamepad_id && abs( ev->caxis.value ) < 8000 )
++			break;
++#endif
+ 		SDLash_SetActiveGameController( ev->caxis.which );
+ 		x = ev->caxis.axis;
+ 		if( x >= 0 && x < ARRAYSIZE( g_axis_mapping ))
+@@ -363,7 +647,55 @@ void Platform_Vibrate2( float time, int val1, int val2, uint flags )
  		val2 = COM_RandomLong( 0x7FFF, 0xFFFF );
  
  	Uint32 ms = (Uint32)ceil( time );
@@ -1497,6 +1685,26 @@ index 99d45b0..bfa6541 100644
  #endif // SDL_VERSION_ATLEAST( 2, 0, 9 )
  }
  
+@@ -389,6 +721,19 @@ int Platform_JoyInit( void )
+ 	SDL_SetHint( SDL_HINT_JOYSTICK_HIDAPI_PS4_RUMBLE, "1" );
+ 	SDL_SetHint( SDL_HINT_JOYSTICK_HIDAPI_PS5_RUMBLE, "1" );
+ 
++#if XASH_WIIU
++	// SDL's Wii U driver reads the Pro Controller (KPAD) with the GamePad's button order, but only
++	// ships a GameController mapping for the GamePad, so the engine never saw it. Same layout as the
++	// GamePad's built-in mapping; the GUID is SDL's name-based one for "Wii U Pro Controller" (first
++	// 11 characters, CRC 0 matches any). Set as a hint, which SDL reads before detecting controllers
++	// (one already connected at startup is then added too)
++	SDL_SetHint( SDL_HINT_GAMECONTROLLERCONFIG,
++		"0000000057696920552050726f204300,Wii U Pro Controller,a:b0,b:b1,back:b11,dpdown:b15,dpleft:b12,"
++		"dpright:b14,dpup:b13,leftshoulder:b6,leftstick:b4,lefttrigger:b8,leftx:a0,lefty:a1,rightshoulder:b7,"
++		"rightstick:b5,righttrigger:b9,rightx:a2,righty:a3,start:b10,x:b2,y:b3,"
++		"hint:SDL_GAMECONTROLLER_USE_BUTTON_LABELS:=1,platform:Wii U," );
++#endif
++
+ 	Con_Reportf( "Joystick: SDL GameController API\n" );
+ 	if( SDL_WasInit( SDL_INIT_GAMECONTROLLER ) != SDL_INIT_GAMECONTROLLER &&
+ 		SDL_InitSubSystem( SDL_INIT_GAMECONTROLLER ))
 diff --git a/engine/platform/sdl2/platform_sdl2.h b/engine/platform/sdl2/platform_sdl2.h
 index 3670a9d..e232ef2 100644
 --- a/engine/platform/sdl2/platform_sdl2.h

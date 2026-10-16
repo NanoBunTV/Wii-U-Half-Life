@@ -99,7 +99,8 @@ threads, time and BSD sockets.
 
 Video, audio, input, timers and threads come from Xash's SDL2 backend (`engine/platform/sdl2`) on top of
 devkitPro's `wiiu-sdl2`. That covers the GamePad, Pro Controller and Wiimote+Nunchuk, HOME menu handling
-(ProcUI) and AX audio.
+(ProcUI) and AX audio. The engine only uses SDL's GameController API, and SDL ships a mapping for the
+GamePad only; the Pro Controller's is added on Wii U (below).
 
 **Video output:** SDL's Wii U window always has the TV scan mode's size (1920x1080, 1280x720 or 854x480).
 `ref_gl` (see "Hardware rendering") and the software renderer draw at `vid_wiiu_render_height` lines instead (default 720, width follows the TV's
@@ -122,10 +123,24 @@ Engine changes for the port are guarded by `#if XASH_WIIU`. They include:
   link wraps `VPADRead` (`-Wl,--wrap=VPADRead`, `__wrap_VPADRead` in `joy_sdl2.c`) and collects the gyro
   from SDL's own reads; `SDLash_WiiUGyroFrame` feeds the average to the engine's normal gyro calibration
   and aiming every frame. Calibration runs on the raw GamePad axes; `SDLash_WiiUGyroToView` then converts
-  them to pitch (−x) and yaw around gravity (from the accelerometer, so any holding angle works);
+  them to pitch (−x) and yaw around gravity (from the accelerometer, so any holding angle works).
+  Since 2026-10-15 a calibration (startup, `joy_calibrate_gyro`, turning gyro on with −) only takes a
+  1 s window in which every sample stays within 0.1 rad/s of the window's average; any movement starts the
+  window over, and gyro events are blocked meanwhile. Before, the first 5 s were averaged whatever
+  happened, so moving the GamePad during startup left a constant drift until the next start (owner,
+  hardware). A recalibration that finds no still second within 4 s keeps the previous offsets;
+- Pro Controller (2026-10-15): SDL's driver already reads it (KPAD) with the GamePad's button order, so
+  `Platform_JoyInit` sets `SDL_HINT_GAMECONTROLLERCONFIG` to a copy of the GamePad's mapping under SDL's
+  name-based GUID for "Wii U Pro Controller" (first 11 characters; a mapping with CRC 0 matches any CRC).
+  As a hint it's read before SDL detects controllers, so one connected at startup is added too. Same
+  bindings (the `K_*` keys are shared), no gyro (− says "This controller has no gyro"), no rumble. The
+  controller last used is the active one; a stick only switches over when pushed past 8000 of 32767, so a
+  resting stick's jitter on the other controller can't overwrite the shared axes. Switching back to the
+  GamePad keeps its gyro calibration;
 - `-log` writes `sd:/wiiu/apps/halflife/engine.log` (`sys_con.c`, absolute default path on Wii U);
 - `joy_gyro_toggle` (−, since 2026-10-14): gyro aiming on/off through the saved `joy_gyro_enable` (on by
-  default) with a centre-screen message (`in_joy.c`). It replaced `+gyro_recenter` on − (still a command:
+  default) with a centre-screen message (`in_joy.c`). Turning it on recalibrates (above), the fix for a
+  drift left by a bad startup calibration. It replaced `+gyro_recenter` on − (still a command:
   levels the view, gyro paused while held), since the right stick (`joy_centerview`) levels the view
   already. `Key_SetBinding` turns a saved `bind BACK +gyro_recenter` into the toggle, so older
   `config.cfg` files get it too (`in_keys.c`);
@@ -153,9 +168,15 @@ Engine changes for the port are guarded by `#if XASH_WIIU`. They include:
 - `hud_fastswitch` defaults to 1 (`cl_dll/ammo.cpp`, hlsdk-portable patch);
 - `hud_fontscale` defaults to 2 (`cl_main.c`): titles, credits and `game_text` were sized for 480 lines and
   were small at 720p on a TV;
+- `con_fontscale` defaults to 2 (2026-10-15, `console.c`): the console font, and with it the notify lines
+  (top left with `-dev`), the FPS counter, centre prints (gyro on/off, game messages) and the `r_speeds`
+  overlay, which all draw with it, were barely readable on the GamePad's screen;
+- notify lines (recent console messages, top left) only with `-dev` (2026-10-15, `Con_DrawNotify`):
+  `DEFAULT_ALLOWCONSOLE` is 1 on Wii U so the menu's Console entry works, and that alone showed every
+  console message during play. On PC they need `-dev` too. Chat input still draws there;
 - `wiiu_config_version` (`Host_WiiUUpgradeConfig`, `host.c`): `config.cfg` saves every archived cvar,
   defaults included, so changed Wii U defaults never reached existing installs. After `config.cfg`, each
-  step newer than the saved version is applied once (1: `hud_fastswitch 1`, `hud_fontscale 2`). Add a
+  step newer than the saved version is applied once (1: `hud_fastswitch 1`, `hud_fontscale 2`; 2: `con_fontscale 2`). Add a
   step whenever a Wii U default changes;
 - `snd_gain` (default 1.5, saved): final audio output gain before clipping (`s_mix.c`), because the
   GamePad's speakers were quiet at the PC level. SDL's Wii U audio already mixes at unity (`0x8000`);
