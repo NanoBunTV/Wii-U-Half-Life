@@ -44,8 +44,8 @@ enemies can drop into the 50s. If you find a bug, please open an issue (see [Rep
 | D-pad left / right | Quick save / quick load |
 | L3 (click left stick) | Walk (hold) |
 | R3 (click right stick) | Look straight ahead |
-| + | Pause menu |
-| − | Gyro aiming on / off |
+| + (Start) | Pause menu |
+| − (Select) | Gyro aiming on / off |
 
  - **Gyro aiming** (GamePad only) is on by default and adds to the right stick. It calibrates when the game
    starts and starts working once the GamePad has been held still for a second. To move the GamePad back to
